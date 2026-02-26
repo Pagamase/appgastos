@@ -15,6 +15,7 @@ const CATEGORIES = [
   "comida",
   "cena",
   "taxi",
+  "alojamiento",
   "Otro",
 ];
 
