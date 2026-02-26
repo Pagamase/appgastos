@@ -203,10 +203,23 @@ function syncTripExpensesToSheets_(
 
     const expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
     const rows = [];
+    let photoCount = 0;
+    let photoLinkedCount = 0;
+    let photoUploadErrorCount = 0;
 
     for (let j = 0; j < expenses.length; j += 1) {
       const expense = expenses[j];
+      const hasPhotoPayload = String(expense && expense.photoDataUrl ? expense.photoDataUrl : "").trim();
+      if (hasPhotoPayload) {
+        photoCount += 1;
+      }
       rows.push(buildExpenseRow_(trip, expense));
+      if (String(expense && expense.photoUrl ? expense.photoUrl : "").trim()) {
+        photoLinkedCount += 1;
+      }
+      if (String(expense && expense.photoUploadError ? expense.photoUploadError : "").trim()) {
+        photoUploadErrorCount += 1;
+      }
     }
 
     writeExpenseRows_(resolveResult.sheet, rows);
@@ -216,6 +229,9 @@ function syncTripExpensesToSheets_(
       status: resolveResult.created ? "written_after_sheet_recovery" : "written",
       expenseCount: expenses.length,
       wroteRows: rows.length,
+      photoCount: photoCount,
+      photoLinkedCount: photoLinkedCount,
+      photoUploadErrorCount: photoUploadErrorCount,
     });
   }
 
@@ -321,6 +337,7 @@ function ensureExpensePhotoUrl_(trip, expense) {
 
   const currentUrl = String(expense.photoUrl || "").trim();
   if (currentUrl) {
+    expense.photoUploadError = "";
     return currentUrl;
   }
 
@@ -328,11 +345,13 @@ function ensureExpensePhotoUrl_(trip, expense) {
   if (currentFileId) {
     const existingUrl = buildDriveFileUrl_(currentFileId);
     expense.photoUrl = existingUrl;
+    expense.photoUploadError = "";
     return existingUrl;
   }
 
   const dataUrl = String(expense.photoDataUrl || "").trim();
   if (!dataUrl) {
+    expense.photoUploadError = "";
     return "";
   }
 
@@ -341,9 +360,13 @@ function ensureExpensePhotoUrl_(trip, expense) {
     expense.photoFileId = uploadResult.fileId;
     expense.photoUrl = uploadResult.url;
     expense.photoDataUrl = "";
+    expense.photoUploadError = "";
     return uploadResult.url;
-  } catch (_error) {
+  } catch (error) {
     // Si falla subida de foto, no rompe guardado del gasto.
+    const message = String(error && error.message ? error.message : error || "");
+    expense.photoUploadError = message;
+    Logger.log("Photo upload error: " + message);
     return "";
   }
 }
