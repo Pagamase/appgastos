@@ -998,6 +998,9 @@ function normalizeTrip(value) {
     endDate: safeTrim(value.endDate),
     budget: Number.isFinite(budget) && budget >= 0 ? budget : 0,
     createdAt: Number.isFinite(Number(value.createdAt)) ? Number(value.createdAt) : Date.now(),
+    photoFolderId: safeTrim(value.photoFolderId),
+    photoFolderName: safeTrim(value.photoFolderName),
+    photoFolderError: safeTrim(value.photoFolderError),
     expenses: Array.isArray(value.expenses)
       ? value.expenses.map(normalizeExpense).filter(Boolean)
       : [],

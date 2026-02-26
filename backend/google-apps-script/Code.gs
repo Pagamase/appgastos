@@ -82,6 +82,7 @@ function saveState_(rawState) {
   const tripMapSheet = getTripMapSheet_(spreadsheet);
   const previousState = readStoredState_();
   const state = sanitizeState_(rawState);
+  preserveServerTripMetadata_(previousState, state);
   const nowIso = new Date().toISOString();
 
   let createdSheets = [];
@@ -459,6 +460,13 @@ function getOrCreateTripPhotosFolder_(trip) {
 
   const rootFolder = getOrCreatePhotosRootFolder_();
   const baseName = buildTripPhotosFolderName_(trip);
+  const existingByName = findExistingTripFolderByName_(rootFolder, trip, baseName);
+  if (existingByName) {
+    trip.photoFolderId = existingByName.getId();
+    trip.photoFolderName = existingByName.getName();
+    trip.photoFolderError = "";
+    return existingByName;
+  }
   const finalFolderName = makeUniqueChildFolderName_(rootFolder, baseName);
   const newFolder = rootFolder.createFolder(finalFolderName);
 
@@ -502,6 +510,70 @@ function sanitizeDriveFolderName_(value) {
     return "Viaje - Sin destino";
   }
   return text;
+}
+
+function findExistingTripFolderByName_(rootFolder, trip, baseName) {
+  const candidates = [];
+  const storedName = sanitizeDriveFolderName_(String(trip && trip.photoFolderName ? trip.photoFolderName : ""));
+  if (storedName) {
+    candidates.push(storedName);
+  }
+  if (baseName && candidates.indexOf(baseName) === -1) {
+    candidates.push(baseName);
+  }
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const currentName = candidates[i];
+    if (!currentName) {
+      continue;
+    }
+    const folders = rootFolder.getFoldersByName(currentName);
+    if (folders.hasNext()) {
+      return folders.next();
+    }
+  }
+
+  return null;
+}
+
+function preserveServerTripMetadata_(previousState, nextState) {
+  const prevTrips = Array.isArray(previousState && previousState.trips)
+    ? previousState.trips
+    : [];
+  const nextTrips = Array.isArray(nextState && nextState.trips) ? nextState.trips : [];
+  if (!prevTrips.length || !nextTrips.length) {
+    return;
+  }
+
+  const prevByTripId = {};
+  for (let i = 0; i < prevTrips.length; i += 1) {
+    const previousTrip = prevTrips[i];
+    const tripId = getTripId_(previousTrip);
+    if (!tripId) {
+      continue;
+    }
+    prevByTripId[tripId] = previousTrip;
+  }
+
+  for (let j = 0; j < nextTrips.length; j += 1) {
+    const nextTrip = nextTrips[j];
+    const tripId = getTripId_(nextTrip);
+    if (!tripId) {
+      continue;
+    }
+
+    const previousTrip = prevByTripId[tripId];
+    if (!previousTrip) {
+      continue;
+    }
+
+    if (!String(nextTrip.photoFolderId || "").trim()) {
+      nextTrip.photoFolderId = String(previousTrip.photoFolderId || "").trim();
+    }
+    if (!String(nextTrip.photoFolderName || "").trim()) {
+      nextTrip.photoFolderName = String(previousTrip.photoFolderName || "").trim();
+    }
+  }
 }
 
 function extensionFromMimeType_(mimeType) {
