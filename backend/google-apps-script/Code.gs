@@ -447,6 +447,15 @@ function buildDriveFileUrl_(fileId) {
   return "https://drive.google.com/file/d/" + String(fileId || "") + "/view";
 }
 
+function authorizeDriveAccess() {
+  const folder = getOrCreatePhotosFolder_();
+  return {
+    ok: true,
+    folderId: folder.getId(),
+    folderName: folder.getName(),
+  };
+}
+
 function formatDateForSheet_(value) {
   const text = String(value || "").trim();
   const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
