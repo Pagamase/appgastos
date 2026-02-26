@@ -12,12 +12,26 @@ const PHOTO_JPEG_QUALITY = 0.78;
 
 const CATEGORIES = [
   "Desayuno",
-  "comida",
-  "cena",
-  "taxi",
-  "alojamiento",
+  "Comida",
+  "Cena",
+  "Taxi",
+  "Alojamiento",
   "Otro",
 ];
+
+const CATEGORY_ALIASES = {
+  desayuno: "Desayuno",
+  comida: "Comida",
+  comidas: "Comida",
+  cena: "Cena",
+  taxi: "Taxi",
+  transporte: "Taxi",
+  alojamiento: "Alojamiento",
+  otro: "Otro",
+  otros: "Otro",
+  cliente: "Otro",
+  material: "Otro",
+};
 
 const PAYMENT_METHODS = [
   "Tarjeta empresa",
@@ -225,7 +239,7 @@ async function onExpenseSubmit(event) {
   }
 
   const date = safeTrim(formData.get("expenseDate")) || todayIso();
-  const category = safeTrim(formData.get("category"));
+  const category = normalizeCategory(formData.get("category"));
   const description = safeTrim(formData.get("description"));
   const amountRaw = safeTrim(formData.get("amount"));
   const paymentMethod = safeTrim(formData.get("paymentMethod"));
@@ -269,7 +283,7 @@ async function onExpenseSubmit(event) {
 
   if (editingExpense) {
     editingExpense.date = date;
-    editingExpense.category = category || editingExpense.category || "Otro";
+    editingExpense.category = category;
     editingExpense.description = description;
     editingExpense.amount = amount;
     editingExpense.paymentMethod = paymentMethod || editingExpense.paymentMethod || "Otro";
@@ -392,7 +406,7 @@ function fillExpenseFormForEdit(expense) {
   }
 
   refs.expenseForm.elements.expenseDate.value = expense.date || todayIso();
-  refs.expenseForm.elements.category.value = expense.category || "Otro";
+  refs.expenseForm.elements.category.value = normalizeCategory(expense.category);
   refs.expenseForm.elements.description.value = expense.description || "";
   refs.expenseForm.elements.amount.value = String(expense.amount || "");
   refs.expenseForm.elements.paymentMethod.value = expense.paymentMethod || "Otro";
@@ -1020,7 +1034,7 @@ function normalizeExpense(value) {
   return {
     id: typeof value.id === "string" ? value.id : createId(),
     date: safeTrim(value.date) || todayIso(),
-    category: safeTrim(value.category) || "Otro",
+    category: normalizeCategory(value.category),
     description: safeTrim(value.description) || "Gasto",
     amount,
     paymentMethod: safeTrim(value.paymentMethod) || "Otro",
@@ -1117,6 +1131,24 @@ function createId() {
 
 function parseAmount(value) {
   return Number.parseFloat(String(value).replace(",", "."));
+}
+
+function normalizeCategory(value) {
+  const raw = safeTrim(value);
+  if (!raw) {
+    return "Otro";
+  }
+
+  const key = raw.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(CATEGORY_ALIASES, key)) {
+    return CATEGORY_ALIASES[key];
+  }
+
+  if (CATEGORIES.includes(raw)) {
+    return raw;
+  }
+
+  return "Otro";
 }
 
 function safeTrim(value) {
