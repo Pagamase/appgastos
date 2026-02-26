@@ -1,7 +1,9 @@
 "use strict";
 
 const STORAGE_KEY = "fluge_travel_expenses_v1";
-const SYNC_CONFIG_KEY = "fluge_sync_config_v1";
+const FIXED_CLOUD_ENDPOINT =
+  "https://script.google.com/macros/s/AKfycbzjDcaLbBCrEcYF-2yh1x-ArrdCrRihi-aZJyjTQbHVIPt8QC6VPBCPiRMiQvtygUQ/exec";
+const FIXED_CLOUD_TOKEN = "";
 const REMOTE_TIMEOUT_MS = 12000;
 const REMOTE_SAVE_DEBOUNCE_MS = 700;
 const MAX_PHOTO_FILE_BYTES = 8 * 1024 * 1024;
@@ -31,8 +33,8 @@ const state = {
 };
 
 const syncState = {
-  endpoint: "",
-  token: "",
+  endpoint: FIXED_CLOUD_ENDPOINT,
+  token: FIXED_CLOUD_TOKEN,
   saveTimerId: null,
   saveInFlight: false,
   hasPendingSave: false,
@@ -48,8 +50,6 @@ async function init() {
   cacheRefs();
   populateStaticSelects();
   refs.expenseDate.value = todayIso();
-  loadSyncConfig();
-  renderSyncConfig();
   bindEvents();
   await loadState();
   renderAll();
@@ -82,12 +82,7 @@ function cacheRefs() {
   refs.expenseList = document.getElementById("expense-list");
   refs.expenseEmpty = document.getElementById("expense-empty");
 
-  refs.cloudForm = document.getElementById("cloud-form");
-  refs.cloudEndpoint = document.getElementById("cloud-endpoint");
-  refs.cloudToken = document.getElementById("cloud-token");
-  refs.pullCloud = document.getElementById("pull-cloud");
   refs.syncNow = document.getElementById("sync-now");
-  refs.disconnectCloud = document.getElementById("disconnect-cloud");
   refs.syncStatus = document.getElementById("sync-status");
 }
 
@@ -105,16 +100,9 @@ function bindEvents() {
   refs.filterCategory.addEventListener("change", renderExpenses);
   refs.exportCsv.addEventListener("click", onExportCsv);
 
-  refs.cloudForm.addEventListener("submit", (event) => {
-    void onCloudFormSubmit(event);
-  });
-  refs.pullCloud.addEventListener("click", () => {
-    void onPullCloud();
-  });
   refs.syncNow.addEventListener("click", () => {
     void onSyncNow();
   });
-  refs.disconnectCloud.addEventListener("click", onDisconnectCloud);
 
   document.addEventListener("visibilitychange", () => {
     void onVisibilitySync();
@@ -343,75 +331,13 @@ function onExportCsv() {
   downloadCsv(fileName, csv);
 }
 
-async function onCloudFormSubmit(event) {
-  event.preventDefault();
-
-  const endpoint = safeTrim(refs.cloudEndpoint.value);
-  const token = safeTrim(refs.cloudToken.value);
-
-  if (!endpoint) {
-    window.alert("Pega la URL del Web App de Google Apps Script.");
-    return;
-  }
-
-  if (!isValidHttpUrl(endpoint)) {
-    window.alert("La URL de nube no es valida.");
-    return;
-  }
-
-  syncState.endpoint = endpoint;
-  syncState.token = token;
-  persistSyncConfig();
-  renderSyncConfig();
-
-  await bootstrapCloudSync();
-  renderAll();
-}
-
-async function onPullCloud() {
-  if (!hasCloudConfig()) {
-    window.alert("Configura primero la URL de nube.");
-    return;
-  }
-
-  await pullStateFromCloud({
-    updateStatus: true,
-    preserveLocalWhenRemoteEmpty: true,
-  });
-}
-
 async function onSyncNow() {
   if (!hasCloudConfig()) {
-    window.alert("Configura primero la URL de nube.");
+    window.alert("No hay conexion configurada con Google Sheets.");
     return;
   }
 
   await pushStateToCloud({ updateStatus: true });
-}
-
-function onDisconnectCloud() {
-  if (!hasCloudConfig()) {
-    return;
-  }
-
-  const confirmed = window.confirm(
-    "Desconectar la nube? Los datos locales se mantienen, pero dejaran de sincronizar.",
-  );
-  if (!confirmed) {
-    return;
-  }
-
-  if (syncState.saveTimerId) {
-    clearTimeout(syncState.saveTimerId);
-    syncState.saveTimerId = null;
-  }
-
-  syncState.endpoint = "";
-  syncState.token = "";
-  syncState.hasPendingSave = false;
-  persistSyncConfig();
-  renderSyncConfig();
-  setSyncStatus("Modo local (sin nube).");
 }
 
 async function onVisibilitySync() {
@@ -434,7 +360,6 @@ function renderAll() {
   renderTripControls();
   renderSummary();
   renderExpenses();
-  renderSyncConfig();
 }
 
 function renderTripControls() {
@@ -612,17 +537,10 @@ function renderExpenseItem(expense) {
   `;
 }
 
-function renderSyncConfig() {
-  refs.cloudEndpoint.value = syncState.endpoint;
-  refs.cloudToken.value = syncState.token;
-
-  const cloudEnabled = hasCloudConfig();
-  refs.pullCloud.disabled = !cloudEnabled;
-  refs.syncNow.disabled = !cloudEnabled;
-  refs.disconnectCloud.disabled = !cloudEnabled;
-}
-
 function setSyncStatus(message, tone = "") {
+  if (!refs.syncStatus) {
+    return;
+  }
   refs.syncStatus.textContent = message;
   refs.syncStatus.classList.remove("status-ok", "status-warn", "status-bad");
   if (tone === "ok") {
@@ -636,30 +554,6 @@ function setSyncStatus(message, tone = "") {
 
 function hasCloudConfig() {
   return Boolean(syncState.endpoint);
-}
-
-function loadSyncConfig() {
-  try {
-    const raw = localStorage.getItem(SYNC_CONFIG_KEY);
-    if (!raw) {
-      return;
-    }
-    const parsed = JSON.parse(raw);
-    syncState.endpoint = safeTrim(parsed?.endpoint);
-    syncState.token = safeTrim(parsed?.token);
-  } catch (error) {
-    console.error("No se pudo cargar configuracion de nube:", error);
-  }
-}
-
-function persistSyncConfig() {
-  localStorage.setItem(
-    SYNC_CONFIG_KEY,
-    JSON.stringify({
-      endpoint: syncState.endpoint,
-      token: syncState.token,
-    }),
-  );
 }
 
 async function loadState() {
@@ -1137,13 +1031,4 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function isValidHttpUrl(value) {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
 }

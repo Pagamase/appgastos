@@ -22,26 +22,12 @@
 
     <section class="panel reveal delay-1">
       <div class="section-head">
-        <h2>Sincronizacion en la nube</h2>
-        <p class="muted" id="sync-status">Modo local (sin nube).</p>
+        <h2>Sincronizacion</h2>
+        <p class="muted" id="sync-status">Conectando con Google Sheets...</p>
       </div>
-
-      <form id="cloud-form" class="form-grid">
-        <label class="field full">
-          <span>URL Web App (Google Apps Script)</span>
-          <input type="url" id="cloud-endpoint" name="endpoint" placeholder="https://script.google.com/macros/s/.../exec">
-        </label>
-        <label class="field">
-          <span>Token secreto</span>
-          <input type="password" id="cloud-token" name="token" placeholder="Opcional pero recomendado">
-        </label>
-        <div class="action-row">
-          <button class="btn primary" type="submit">Guardar y conectar</button>
-          <button class="btn secondary" type="button" id="pull-cloud">Traer de nube</button>
-          <button class="btn secondary" type="button" id="sync-now">Sincronizar ahora</button>
-          <button class="btn ghost" type="button" id="disconnect-cloud">Desconectar</button>
-        </div>
-      </form>
+      <div class="action-row">
+        <button class="btn secondary" type="button" id="sync-now">Sincronizar ahora</button>
+      </div>
     </section>
 
     <section class="panel-grid">
@@ -87,7 +73,7 @@
       <article class="panel reveal delay-3">
         <div class="section-head">
           <h2>Nuevo gasto</h2>
-          <p class="muted">Se guarda en local y en nube si esta conectada.</p>
+          <p class="muted">Se guarda en local y sincroniza automaticamente con tu Sheet.</p>
         </div>
 
         <form id="expense-form" class="form-grid">

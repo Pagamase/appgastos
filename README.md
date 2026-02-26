@@ -1,6 +1,6 @@
 # App Gastos Fluge
 
-Aplicacion web para registrar gastos de viajes de trabajo, con sincronizacion opcional en Google Sheets.
+Aplicacion web para registrar gastos de viajes de trabajo, conectada de forma fija a Google Sheets.
 
 ## Funciones
 - Crear y gestionar viajes con destino, fechas y presupuesto.
@@ -10,7 +10,7 @@ Aplicacion web para registrar gastos de viajes de trabajo, con sincronizacion op
 - Buscar y filtrar gastos.
 - Eliminar gastos y viajes.
 - Exportar CSV del viaje activo.
-- Guardado local automatico y sincronizacion en nube (si configuras Apps Script).
+- Guardado local automatico y sincronizacion en Google Sheets.
 - Al sincronizar, cada gasto se escribe en su hoja del viaje en filas (A:G desde fila 3).
 
 ## Archivos principales
@@ -42,16 +42,15 @@ Aplicacion web para registrar gastos de viajes de trabajo, con sincronizacion op
    - `Execute as`: `Me`
    - `Who has access`: `Anyone`
 7. Copia la URL terminada en `/exec`.
-8. En la app web, en **Sincronizacion en la nube**:
-   - Pega la URL.
-   - Pega el token (si lo configuraste).
-   - Click en `Guardar y conectar`.
+8. En `app.js`, actualiza:
+   - `FIXED_CLOUD_ENDPOINT` con tu URL `/exec`.
+   - `FIXED_CLOUD_TOKEN` si usas token.
 
 ## Flujo de sincronizacion
 - Si la nube ya tiene datos, la app carga esos datos.
 - Si la nube esta vacia pero local tiene datos, sube la copia local.
 - Cada cambio se guarda en local y se sincroniza automaticamente.
-- Puedes usar `Traer de nube` o `Sincronizar ahora` manualmente.
+- Puedes usar `Sincronizar ahora` manualmente.
 - Cada viaje nuevo crea una pestana nueva en el Sheet, copiando `TEMPLATE_SHEET_NAME`.
 - El nombre de la nueva pestana se genera reemplazando `Base` por el `Destino` del viaje (ejemplo: `Gastos_Madrid`).
 - Al crear la pestana, se escribe en `A1:G1`:
