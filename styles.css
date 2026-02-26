@@ -348,6 +348,11 @@ h2 {
   animation: slide-in 280ms ease;
 }
 
+.expense-item-editing {
+  border-color: rgba(217, 95, 43, 0.5);
+  box-shadow: 0 0 0 2px rgba(217, 95, 43, 0.18);
+}
+
 .expense-main p {
   margin: 0;
 }
@@ -372,6 +377,16 @@ h2 {
   display: grid;
   justify-items: end;
   gap: 0.45rem;
+}
+
+#expense-photo-status {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #2f3f39;
+  padding: 0.55rem 0.68rem;
+  border-radius: 10px;
+  border: 1px solid rgba(22, 35, 29, 0.14);
+  background: rgba(255, 255, 255, 0.62);
 }
 
 .expense-amount {

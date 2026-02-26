@@ -72,8 +72,8 @@
 
       <article class="panel reveal delay-3">
         <div class="section-head">
-          <h2>Nuevo gasto</h2>
-          <p class="muted">Se guarda en local y sincroniza automaticamente con tu Sheet.</p>
+          <h2 id="expense-form-title">Nuevo gasto</h2>
+          <p class="muted" id="expense-form-subtitle">Se guarda en local y sincroniza automaticamente con tu Sheet.</p>
         </div>
 
         <form id="expense-form" class="form-grid">
@@ -109,7 +109,11 @@
             <span>Foto ticket (opcional)</span>
             <input type="file" name="photo" id="expense-photo" accept="image/*" capture="environment">
           </label>
-          <button class="btn primary" type="submit">Guardar gasto</button>
+          <p class="muted hidden full" id="expense-photo-status"></p>
+          <div class="action-row">
+            <button class="btn primary" type="submit" id="expense-submit-btn">Guardar gasto</button>
+            <button class="btn ghost hidden" type="button" id="expense-cancel-edit">Cancelar edicion</button>
+          </div>
         </form>
       </article>
     </section>

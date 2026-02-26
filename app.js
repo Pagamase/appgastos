@@ -40,6 +40,10 @@ const syncState = {
   hasPendingSave: false,
 };
 
+const uiState = {
+  editingExpenseId: null,
+};
+
 const refs = {};
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -62,10 +66,15 @@ function cacheRefs() {
   refs.tripEmpty = document.getElementById("trip-empty");
 
   refs.expenseForm = document.getElementById("expense-form");
+  refs.expenseFormTitle = document.getElementById("expense-form-title");
+  refs.expenseFormSubtitle = document.getElementById("expense-form-subtitle");
+  refs.expenseSubmitBtn = document.getElementById("expense-submit-btn");
+  refs.expenseCancelEdit = document.getElementById("expense-cancel-edit");
   refs.expenseDate = document.getElementById("expense-date");
   refs.expenseCategory = document.getElementById("expense-category");
   refs.paymentMethod = document.getElementById("payment-method");
   refs.expensePhoto = document.getElementById("expense-photo");
+  refs.expensePhotoStatus = document.getElementById("expense-photo-status");
 
   refs.totalSpent = document.getElementById("total-spent");
   refs.totalBudget = document.getElementById("total-budget");
@@ -94,6 +103,7 @@ function bindEvents() {
   refs.expenseForm.addEventListener("submit", (event) => {
     void onExpenseSubmit(event);
   });
+  refs.expenseCancelEdit.addEventListener("click", onCancelExpenseEdit);
   refs.expenseList.addEventListener("click", onExpenseListClick);
 
   refs.searchExpense.addEventListener("input", renderExpenses);
@@ -158,6 +168,7 @@ function onTripSubmit(event) {
 
   state.trips.unshift(trip);
   state.activeTripId = trip.id;
+  exitExpenseEditMode({ resetForm: true });
   saveState();
 
   event.currentTarget.reset();
@@ -166,6 +177,7 @@ function onTripSubmit(event) {
 
 function onActiveTripChange(event) {
   state.activeTripId = event.target.value || null;
+  exitExpenseEditMode({ resetForm: true });
   saveState();
   renderAll();
 }
@@ -185,6 +197,7 @@ function onTripDelete() {
 
   state.trips = state.trips.filter((trip) => trip.id !== activeTrip.id);
   state.activeTripId = state.trips[0]?.id ?? null;
+  exitExpenseEditMode({ resetForm: true });
   saveState();
   renderAll();
 }
@@ -199,6 +212,18 @@ async function onExpenseSubmit(event) {
   }
 
   const formData = new FormData(event.currentTarget);
+  const editingExpense =
+    uiState.editingExpenseId
+      ? activeTrip.expenses.find((expense) => expense.id === uiState.editingExpenseId) || null
+      : null;
+
+  if (uiState.editingExpenseId && !editingExpense) {
+    exitExpenseEditMode({ resetForm: false });
+    window.alert("El gasto que estabas editando ya no existe.");
+    renderAll();
+    return;
+  }
+
   const date = safeTrim(formData.get("expenseDate")) || todayIso();
   const category = safeTrim(formData.get("category"));
   const description = safeTrim(formData.get("description"));
@@ -221,6 +246,7 @@ async function onExpenseSubmit(event) {
 
   let photoDataUrl = "";
   let photoName = "";
+  let hasNewPhoto = false;
   if (photoFile instanceof File && photoFile.size > 0) {
     if (!String(photoFile.type || "").startsWith("image/")) {
       window.alert("La foto debe ser un archivo de imagen.");
@@ -233,6 +259,7 @@ async function onExpenseSubmit(event) {
     try {
       photoDataUrl = await readAndCompressImageFile(photoFile);
       photoName = safeTrim(photoFile.name);
+      hasNewPhoto = true;
     } catch (error) {
       console.error("No se pudo procesar la foto:", error);
       window.alert("No se pudo procesar la foto seleccionada.");
@@ -240,27 +267,45 @@ async function onExpenseSubmit(event) {
     }
   }
 
-  const expense = {
-    id: createId(),
-    date,
-    category,
-    description,
-    amount,
-    paymentMethod,
-    billable,
-    notes,
-    photoDataUrl,
-    photoName,
-    photoUrl: "",
-    photoFileId: "",
-    createdAt: Date.now(),
-  };
+  if (editingExpense) {
+    editingExpense.date = date;
+    editingExpense.category = category || editingExpense.category || "Otros";
+    editingExpense.description = description;
+    editingExpense.amount = amount;
+    editingExpense.paymentMethod = paymentMethod || editingExpense.paymentMethod || "Otro";
+    editingExpense.billable = billable;
+    editingExpense.notes = notes;
 
-  activeTrip.expenses.push(expense);
+    if (hasNewPhoto) {
+      // Para reemplazar foto, limpiamos la URL previa y forzamos nueva subida.
+      editingExpense.photoDataUrl = photoDataUrl;
+      editingExpense.photoName = photoName;
+      editingExpense.photoUrl = "";
+      editingExpense.photoFileId = "";
+    }
+  } else {
+    const expense = {
+      id: createId(),
+      date,
+      category,
+      description,
+      amount,
+      paymentMethod,
+      billable,
+      notes,
+      photoDataUrl,
+      photoName,
+      photoUrl: "",
+      photoFileId: "",
+      createdAt: Date.now(),
+    };
+
+    activeTrip.expenses.push(expense);
+  }
+
   saveState();
 
-  event.currentTarget.reset();
-  refs.expenseDate.value = todayIso();
+  exitExpenseEditMode({ resetForm: true });
   renderAll();
 }
 
@@ -270,7 +315,8 @@ function onExpenseListClick(event) {
     return;
   }
 
-  if (button.dataset.action !== "delete-expense") {
+  const action = button.dataset.action;
+  if (!action) {
     return;
   }
 
@@ -280,14 +326,134 @@ function onExpenseListClick(event) {
   }
 
   const expenseId = button.dataset.id;
-  const confirmed = window.confirm("Eliminar este gasto?");
+  if (!expenseId) {
+    return;
+  }
+
+  if (action === "edit-expense") {
+    startExpenseEditById(expenseId);
+    return;
+  }
+
+  if (action !== "delete-expense") {
+    return;
+  }
+
+  const expense = activeTrip.expenses.find((item) => item.id === expenseId);
+  if (!expense) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Eliminar el gasto "${expense.description}"? Esta accion no se puede deshacer.`,
+  );
   if (!confirmed) {
     return;
   }
 
-  activeTrip.expenses = activeTrip.expenses.filter((expense) => expense.id !== expenseId);
+  activeTrip.expenses = activeTrip.expenses.filter((item) => item.id !== expenseId);
+  if (uiState.editingExpenseId === expenseId) {
+    exitExpenseEditMode({ resetForm: true });
+  }
+
   saveState();
   renderAll();
+}
+
+function onCancelExpenseEdit() {
+  exitExpenseEditMode({ resetForm: true });
+  renderAll();
+}
+
+function startExpenseEditById(expenseId) {
+  const activeTrip = getActiveTrip();
+  if (!activeTrip) {
+    return;
+  }
+
+  const expense = activeTrip.expenses.find((item) => item.id === expenseId);
+  if (!expense) {
+    return;
+  }
+
+  uiState.editingExpenseId = expense.id;
+  fillExpenseFormForEdit(expense);
+  updateExpenseFormUi();
+
+  refs.expenseForm.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
+}
+
+function fillExpenseFormForEdit(expense) {
+  if (!refs.expenseForm || !expense) {
+    return;
+  }
+
+  refs.expenseForm.elements.expenseDate.value = expense.date || todayIso();
+  refs.expenseForm.elements.category.value = expense.category || "Otros";
+  refs.expenseForm.elements.description.value = expense.description || "";
+  refs.expenseForm.elements.amount.value = String(expense.amount || "");
+  refs.expenseForm.elements.paymentMethod.value = expense.paymentMethod || "Otro";
+  refs.expenseForm.elements.billable.checked = Boolean(expense.billable);
+  refs.expenseForm.elements.notes.value = expense.notes || "";
+  refs.expensePhoto.value = "";
+}
+
+function exitExpenseEditMode({ resetForm = false } = {}) {
+  uiState.editingExpenseId = null;
+  if (resetForm) {
+    resetExpenseFormInputs_();
+  }
+  updateExpenseFormUi();
+}
+
+function resetExpenseFormInputs_() {
+  if (!refs.expenseForm) {
+    return;
+  }
+
+  refs.expenseForm.reset();
+  refs.expenseDate.value = todayIso();
+  refs.expensePhoto.value = "";
+}
+
+function updateExpenseFormUi() {
+  const activeTrip = getActiveTrip();
+  let editingExpense = null;
+
+  if (activeTrip && uiState.editingExpenseId) {
+    editingExpense =
+      activeTrip.expenses.find((expense) => expense.id === uiState.editingExpenseId) || null;
+  }
+
+  if (!editingExpense && uiState.editingExpenseId) {
+    uiState.editingExpenseId = null;
+  }
+
+  const isEditing = Boolean(editingExpense);
+  refs.expenseFormTitle.textContent = isEditing ? "Editar gasto" : "Nuevo gasto";
+  refs.expenseFormSubtitle.textContent = isEditing
+    ? "Puedes corregir el gasto y adjuntar foto si faltaba."
+    : "Se guarda en local y sincroniza automaticamente con tu Sheet.";
+  refs.expenseSubmitBtn.textContent = isEditing ? "Guardar cambios" : "Guardar gasto";
+  refs.expenseCancelEdit.classList.toggle("hidden", !isEditing);
+
+  refs.expensePhotoStatus.classList.toggle("hidden", !isEditing);
+  if (!isEditing) {
+    refs.expensePhotoStatus.textContent = "";
+    return;
+  }
+
+  const hasPhoto = Boolean(
+    safeTrim(editingExpense.photoUrl) ||
+      safeTrim(editingExpense.photoFileId) ||
+      safeTrim(editingExpense.photoDataUrl),
+  );
+  refs.expensePhotoStatus.textContent = hasPhoto
+    ? "Este gasto ya tiene foto. Si eliges otra, se reemplazara la actual."
+    : "Este gasto no tiene foto. Puedes anadirla ahora.";
 }
 
 function onExportCsv() {
@@ -357,6 +523,7 @@ function onBrowserOnline() {
 
 function renderAll() {
   enforceActiveTrip();
+  updateExpenseFormUi();
   renderTripControls();
   renderSummary();
   renderExpenses();
@@ -507,6 +674,7 @@ function renderExpenses() {
 }
 
 function renderExpenseItem(expense) {
+  const isEditing = uiState.editingExpenseId === expense.id;
   const meta = [
     formatDate(expense.date),
     expense.category,
@@ -520,7 +688,7 @@ function renderExpenseItem(expense) {
     : "";
 
   return `
-    <article class="expense-item">
+    <article class="expense-item${isEditing ? " expense-item-editing" : ""}">
       <div class="expense-main">
         <p class="expense-title">${escapeHtml(expense.description)}</p>
         <p class="expense-meta">${escapeHtml(meta)}</p>
@@ -529,6 +697,9 @@ function renderExpenseItem(expense) {
       <div class="expense-side">
         <span class="expense-amount">${formatCurrency(expense.amount)}</span>
         ${photoAction}
+        <button type="button" class="btn secondary small" data-action="edit-expense" data-id="${expense.id}">
+          Editar
+        </button>
         <button type="button" class="btn ghost small" data-action="delete-expense" data-id="${expense.id}">
           Eliminar
         </button>
