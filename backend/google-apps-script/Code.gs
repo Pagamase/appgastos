@@ -588,14 +588,12 @@ function extensionFromMimeType_(mimeType) {
 }
 
 function buildPhotoFileName_(trip, expense, extension) {
-  const tripPart = sanitizeFileSegment_(
-    (trip && trip.destination) || (trip && trip.name) || "viaje",
-  );
+  const categoryPart = sanitizeFileSegment_((expense && expense.category) || "SinCategoria");
   const datePart = sanitizeFileSegment_(
     (expense && expense.date) || Utilities.formatDate(new Date(), "GMT+0", "yyyy-MM-dd"),
   );
-  const idPart = sanitizeFileSegment_((expense && expense.id) || String(Date.now()));
-  return "gasto_" + tripPart + "_" + datePart + "_" + idPart + "." + extension;
+  const cityPart = sanitizeFileSegment_(getTripDestination_(trip));
+  return categoryPart + "_" + datePart + "_" + cityPart + "." + extension;
 }
 
 function sanitizeFileSegment_(value) {
