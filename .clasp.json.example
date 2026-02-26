@@ -1,0 +1,16 @@
+{
+  "scriptId": "PEGA_AQUI_TU_SCRIPT_ID",
+  "rootDir": "backend/google-apps-script",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": true
+}

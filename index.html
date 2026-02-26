@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>App Gastos Fluge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero reveal">
+      <p class="eyebrow">Control de gastos en viajes de trabajo</p>
+      <h1>App Gastos Fluge</h1>
+      <p class="hero-copy">
+        Registra cada gasto, controla presupuesto por viaje y exporta tus datos en CSV.
+      </p>
+    </header>
+
+    <section class="panel reveal delay-1">
+      <div class="section-head">
+        <h2>Sincronizacion en la nube</h2>
+        <p class="muted" id="sync-status">Modo local (sin nube).</p>
+      </div>
+
+      <form id="cloud-form" class="form-grid">
+        <label class="field full">
+          <span>URL Web App (Google Apps Script)</span>
+          <input type="url" id="cloud-endpoint" name="endpoint" placeholder="https://script.google.com/macros/s/.../exec">
+        </label>
+        <label class="field">
+          <span>Token secreto</span>
+          <input type="password" id="cloud-token" name="token" placeholder="Opcional pero recomendado">
+        </label>
+        <div class="action-row">
+          <button class="btn primary" type="submit">Guardar y conectar</button>
+          <button class="btn secondary" type="button" id="pull-cloud">Traer de nube</button>
+          <button class="btn secondary" type="button" id="sync-now">Sincronizar ahora</button>
+          <button class="btn ghost" type="button" id="disconnect-cloud">Desconectar</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel-grid">
+      <article class="panel reveal delay-2">
+        <div class="section-head">
+          <h2>Viajes</h2>
+          <p class="muted" id="trip-empty">No hay viajes creados.</p>
+        </div>
+
+        <form id="trip-form" class="form-grid">
+          <label class="field">
+            <span>Nombre del viaje</span>
+            <input type="text" name="tripName" placeholder="Ej: Feria de Valencia" required>
+          </label>
+          <label class="field">
+            <span>Destino</span>
+            <input type="text" name="destination" placeholder="Ej: Valencia">
+          </label>
+          <label class="field">
+            <span>Inicio</span>
+            <input type="date" name="startDate">
+          </label>
+          <label class="field">
+            <span>Fin</span>
+            <input type="date" name="endDate">
+          </label>
+          <label class="field">
+            <span>Presupuesto (EUR)</span>
+            <input type="number" name="budget" step="0.01" min="0" placeholder="0.00">
+          </label>
+          <button class="btn primary" type="submit">Crear viaje</button>
+        </form>
+
+        <div class="trip-controls">
+          <label class="field grow">
+            <span>Viaje activo</span>
+            <select id="active-trip"></select>
+          </label>
+          <button type="button" class="btn ghost" id="delete-trip">Eliminar viaje</button>
+        </div>
+      </article>
+
+      <article class="panel reveal delay-3">
+        <div class="section-head">
+          <h2>Nuevo gasto</h2>
+          <p class="muted">Se guarda en local y en nube si esta conectada.</p>
+        </div>
+
+        <form id="expense-form" class="form-grid">
+          <label class="field">
+            <span>Fecha</span>
+            <input type="date" name="expenseDate" id="expense-date" required>
+          </label>
+          <label class="field">
+            <span>Categoria</span>
+            <select name="category" id="expense-category" required></select>
+          </label>
+          <label class="field">
+            <span>Descripcion</span>
+            <input type="text" name="description" placeholder="Ej: Taxi aeropuerto" required>
+          </label>
+          <label class="field">
+            <span>Importe (EUR)</span>
+            <input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required>
+          </label>
+          <label class="field">
+            <span>Medio de pago</span>
+            <select name="paymentMethod" id="payment-method" required></select>
+          </label>
+          <label class="field inline">
+            <input type="checkbox" name="billable" value="true">
+            <span>Facturable al cliente</span>
+          </label>
+          <label class="field full">
+            <span>Notas</span>
+            <textarea name="notes" rows="3" placeholder="Info extra (opcional)"></textarea>
+          </label>
+          <label class="field full">
+            <span>Foto ticket (opcional)</span>
+            <input type="file" name="photo" id="expense-photo" accept="image/*" capture="environment">
+          </label>
+          <button class="btn primary" type="submit">Guardar gasto</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="panel reveal delay-4">
+      <div class="section-head">
+        <h2>Resumen</h2>
+        <button type="button" class="btn secondary" id="export-csv">Exportar CSV</button>
+      </div>
+
+      <div class="summary-grid">
+        <article class="metric-card">
+          <span>Total gastado</span>
+          <strong id="total-spent">EUR 0.00</strong>
+        </article>
+        <article class="metric-card">
+          <span>Presupuesto</span>
+          <strong id="total-budget">EUR 0.00</strong>
+        </article>
+        <article class="metric-card">
+          <span>Disponible</span>
+          <strong id="total-remaining">EUR 0.00</strong>
+        </article>
+        <article class="metric-card">
+          <span>Facturable</span>
+          <strong id="total-billable">EUR 0.00</strong>
+        </article>
+      </div>
+
+      <div class="budget-wrap">
+        <div class="budget-head">
+          <span>Uso del presupuesto</span>
+          <strong id="budget-label">0%</strong>
+        </div>
+        <div class="budget-track">
+          <span id="budget-fill"></span>
+        </div>
+      </div>
+
+      <div id="category-breakdown" class="category-breakdown"></div>
+    </section>
+
+    <section class="panel reveal delay-4">
+      <div class="section-head">
+        <h2>Lista de gastos</h2>
+        <p class="muted" id="list-title">Selecciona un viaje para ver gastos.</p>
+      </div>
+
+      <div class="filters">
+        <label class="field">
+          <span>Buscar</span>
+          <input type="search" id="search-expense" placeholder="Descripcion o notas">
+        </label>
+        <label class="field">
+          <span>Filtrar por categoria</span>
+          <select id="filter-category"></select>
+        </label>
+      </div>
+
+      <div id="expense-list" class="expense-list"></div>
+      <p class="empty-state" id="expense-empty">No hay gastos para mostrar.</p>
+    </section>
+  </main>
+</body>
+</html>

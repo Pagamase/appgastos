@@ -1,0 +1,6 @@
+.clasp.json
+.netlify
+node_modules/
+dist/
+build/
+*.log
