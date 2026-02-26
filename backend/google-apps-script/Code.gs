@@ -589,11 +589,19 @@ function extensionFromMimeType_(mimeType) {
 
 function buildPhotoFileName_(trip, expense, extension) {
   const categoryPart = sanitizeFileSegment_((expense && expense.category) || "SinCategoria");
-  const datePart = sanitizeFileSegment_(
-    (expense && expense.date) || Utilities.formatDate(new Date(), "GMT+0", "yyyy-MM-dd"),
-  );
+  const rawDate = (expense && expense.date) || Utilities.formatDate(new Date(), "GMT+0", "yyyy-MM-dd");
+  const datePart = sanitizeFileSegment_(formatDateForFileName_(rawDate));
   const cityPart = sanitizeFileSegment_(getTripDestination_(trip));
   return categoryPart + "_" + datePart + "_" + cityPart + "." + extension;
+}
+
+function formatDateForFileName_(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return match[3] + "-" + match[2] + "-" + match[1];
+  }
+  return text.replace(/\//g, "-");
 }
 
 function sanitizeFileSegment_(value) {
