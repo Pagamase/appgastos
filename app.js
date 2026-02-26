@@ -11,12 +11,11 @@ const MAX_PHOTO_SIDE = 1400;
 const PHOTO_JPEG_QUALITY = 0.78;
 
 const CATEGORIES = [
-  "Transporte",
-  "Alojamiento",
-  "Comidas",
-  "Cliente",
-  "Material",
-  "Otros",
+  "Desayuno",
+  "comida",
+  "cena",
+  "taxi",
+  "Otro",
 ];
 
 const PAYMENT_METHODS = [
@@ -269,7 +268,7 @@ async function onExpenseSubmit(event) {
 
   if (editingExpense) {
     editingExpense.date = date;
-    editingExpense.category = category || editingExpense.category || "Otros";
+    editingExpense.category = category || editingExpense.category || "Otro";
     editingExpense.description = description;
     editingExpense.amount = amount;
     editingExpense.paymentMethod = paymentMethod || editingExpense.paymentMethod || "Otro";
@@ -392,7 +391,7 @@ function fillExpenseFormForEdit(expense) {
   }
 
   refs.expenseForm.elements.expenseDate.value = expense.date || todayIso();
-  refs.expenseForm.elements.category.value = expense.category || "Otros";
+  refs.expenseForm.elements.category.value = expense.category || "Otro";
   refs.expenseForm.elements.description.value = expense.description || "";
   refs.expenseForm.elements.amount.value = String(expense.amount || "");
   refs.expenseForm.elements.paymentMethod.value = expense.paymentMethod || "Otro";
@@ -1020,7 +1019,7 @@ function normalizeExpense(value) {
   return {
     id: typeof value.id === "string" ? value.id : createId(),
     date: safeTrim(value.date) || todayIso(),
-    category: safeTrim(value.category) || "Otros",
+    category: safeTrim(value.category) || "Otro",
     description: safeTrim(value.description) || "Gasto",
     amount,
     paymentMethod: safeTrim(value.paymentMethod) || "Otro",
