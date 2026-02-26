@@ -79,6 +79,7 @@ function loadState_() {
 
 function saveState_(rawState) {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const tripMapSheet = getTripMapSheet_(spreadsheet);
   const previousState = readStoredState_();
   const state = sanitizeState_(rawState);
   const nowIso = new Date().toISOString();
@@ -86,14 +87,27 @@ function saveState_(rawState) {
   let createdSheets = [];
   let mapByTripId = {};
   if (AUTO_CREATE_TRIP_SHEETS) {
-    const ensureResult = ensureTripSheets_(spreadsheet, previousState, state, nowIso);
+    const ensureResult = ensureTripSheets_(
+      spreadsheet,
+      tripMapSheet,
+      previousState,
+      state,
+      nowIso,
+    );
     createdSheets = ensureResult.createdSheets;
     mapByTripId = ensureResult.mapByTripId;
   } else {
-    mapByTripId = readTripMap_(getTripMapSheet_(spreadsheet));
+    mapByTripId = readTripMap_(tripMapSheet);
   }
 
-  syncTripExpensesToSheets_(spreadsheet, state, mapByTripId);
+  const syncReport = syncTripExpensesToSheets_(
+    spreadsheet,
+    tripMapSheet,
+    state,
+    mapByTripId,
+    nowIso,
+    createdSheets,
+  );
   writeStoredStatePayload_(JSON.stringify(state), nowIso);
   removeLegacyStorageSheetIfPresent_();
 
@@ -102,12 +116,12 @@ function saveState_(rawState) {
     state: state,
     updatedAt: nowIso,
     createdSheets: createdSheets,
+    syncReport: syncReport,
   };
 }
 
-function ensureTripSheets_(spreadsheet, previousState, nextState, nowIso) {
+function ensureTripSheets_(spreadsheet, tripMapSheet, previousState, nextState, nowIso) {
   const templateSheet = getTemplateSheet_(spreadsheet);
-  const tripMapSheet = getTripMapSheet_(spreadsheet);
   const mapByTripId = readTripMap_(tripMapSheet);
   const previousIds = toTripIdMap_(previousState && previousState.trips);
   const createdSheets = [];
@@ -115,7 +129,7 @@ function ensureTripSheets_(spreadsheet, previousState, nextState, nowIso) {
   const trips = Array.isArray(nextState.trips) ? nextState.trips : [];
   for (let i = 0; i < trips.length; i += 1) {
     const trip = trips[i];
-    const tripId = getTripId_(trip);
+    const tripId = ensureTripId_(trip);
     if (!tripId) {
       continue;
     }
@@ -147,23 +161,43 @@ function ensureTripSheets_(spreadsheet, previousState, nextState, nowIso) {
   };
 }
 
-function syncTripExpensesToSheets_(spreadsheet, state, mapByTripId) {
+function syncTripExpensesToSheets_(
+  spreadsheet,
+  tripMapSheet,
+  state,
+  mapByTripId,
+  nowIso,
+  createdSheets,
+) {
   const trips = Array.isArray(state.trips) ? state.trips : [];
+  const report = [];
 
   for (let i = 0; i < trips.length; i += 1) {
     const trip = trips[i];
-    const tripId = getTripId_(trip);
+    const tripId = ensureTripId_(trip);
     if (!tripId) {
+      report.push({
+        tripId: "",
+        status: "skip_no_trip_id",
+      });
       continue;
     }
 
-    const sheetName = String(mapByTripId[tripId] || "").trim();
-    if (!sheetName) {
-      continue;
-    }
-
-    const sheet = spreadsheet.getSheetByName(sheetName);
-    if (!sheet) {
+    const resolveResult = resolveTripSheetForSync_(
+      spreadsheet,
+      tripMapSheet,
+      mapByTripId,
+      trip,
+      tripId,
+      nowIso,
+      createdSheets,
+    );
+    if (!resolveResult.sheet) {
+      report.push({
+        tripId: tripId,
+        sheetName: resolveResult.sheetName,
+        status: resolveResult.status,
+      });
       continue;
     }
 
@@ -175,8 +209,75 @@ function syncTripExpensesToSheets_(spreadsheet, state, mapByTripId) {
       rows.push(buildExpenseRow_(trip, expense));
     }
 
-    writeExpenseRows_(sheet, rows);
+    writeExpenseRows_(resolveResult.sheet, rows);
+    report.push({
+      tripId: tripId,
+      sheetName: resolveResult.sheetName,
+      status: resolveResult.created ? "written_after_sheet_recovery" : "written",
+      expenseCount: expenses.length,
+      wroteRows: rows.length,
+    });
   }
+
+  return report;
+}
+
+function resolveTripSheetForSync_(
+  spreadsheet,
+  tripMapSheet,
+  mapByTripId,
+  trip,
+  tripId,
+  nowIso,
+  createdSheets,
+) {
+  const mappedSheetName = String(mapByTripId[tripId] || "").trim();
+  if (mappedSheetName) {
+    const mappedSheet = spreadsheet.getSheetByName(mappedSheetName);
+    if (mappedSheet) {
+      return {
+        sheetName: mappedSheetName,
+        sheet: mappedSheet,
+        created: false,
+        status: "mapped",
+      };
+    }
+  }
+
+  if (!AUTO_CREATE_TRIP_SHEETS) {
+    return {
+      sheetName: mappedSheetName,
+      sheet: null,
+      created: false,
+      status: mappedSheetName ? "skip_sheet_not_found" : "skip_no_sheet_mapping",
+    };
+  }
+
+  const templateSheet = getTemplateSheet_(spreadsheet);
+  const baseName = buildTripSheetBaseName_(trip, templateSheet.getName());
+  const finalSheetName = makeUniqueSheetName_(spreadsheet, baseName);
+  const newSheet = templateSheet.copyTo(spreadsheet);
+  newSheet.setName(finalSheetName);
+  replaceTemplateTokens_(newSheet, trip);
+  writeTripHeaderInA1G1_(newSheet, trip);
+
+  appendTripMapRow_(tripMapSheet, tripId, finalSheetName, nowIso);
+  mapByTripId[tripId] = finalSheetName;
+
+  if (Array.isArray(createdSheets)) {
+    createdSheets.push({
+      tripId: tripId,
+      sheetName: finalSheetName,
+      reason: mappedSheetName ? "recreated_missing_sheet" : "missing_map_on_save",
+    });
+  }
+
+  return {
+    sheetName: finalSheetName,
+    sheet: newSheet,
+    created: true,
+    status: mappedSheetName ? "sheet_recreated" : "sheet_created_missing_map",
+  };
 }
 
 function writeExpenseRows_(sheet, rows) {
@@ -530,6 +631,19 @@ function getTripId_(trip) {
   }
   const id = String(trip.id || "").trim();
   return id;
+}
+
+function ensureTripId_(trip) {
+  const existingId = getTripId_(trip);
+  if (existingId) {
+    return existingId;
+  }
+  if (!trip || typeof trip !== "object") {
+    return "";
+  }
+  const generatedId = Utilities.getUuid();
+  trip.id = generatedId;
+  return generatedId;
 }
 
 function readStoredState_() {
