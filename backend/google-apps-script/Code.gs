@@ -183,6 +183,8 @@ function syncTripExpensesToSheets_(
       continue;
     }
 
+    const tripPhotoFolder = ensureTripPhotoFolder_(trip);
+
     const resolveResult = resolveTripSheetForSync_(
       spreadsheet,
       tripMapSheet,
@@ -226,6 +228,7 @@ function syncTripExpensesToSheets_(
     report.push({
       tripId: tripId,
       sheetName: resolveResult.sheetName,
+      tripFolderName: tripPhotoFolder ? tripPhotoFolder.getName() : String(trip.photoFolderName || ""),
       status: resolveResult.created ? "written_after_sheet_recovery" : "written",
       expenseCount: expenses.length,
       wroteRows: rows.length,
@@ -377,7 +380,7 @@ function uploadExpensePhotoFromDataUrl_(trip, expense, dataUrl) {
     throw new Error("Formato de foto invalido.");
   }
 
-  const folder = getOrCreatePhotosFolder_();
+  const folder = getOrCreateTripPhotosFolder_(trip);
   const extension = extensionFromMimeType_(parsed.mimeType);
   const fileName = buildPhotoFileName_(trip, expense, extension);
   const blob = Utilities.newBlob(parsed.bytes, parsed.mimeType, fileName);
@@ -407,12 +410,98 @@ function parseDataUrl_(dataUrl) {
   };
 }
 
-function getOrCreatePhotosFolder_() {
+function getOrCreatePhotosRootFolder_() {
   const folders = DriveApp.getFoldersByName(PHOTO_FOLDER_NAME);
   if (folders.hasNext()) {
     return folders.next();
   }
   return DriveApp.createFolder(PHOTO_FOLDER_NAME);
+}
+
+function ensureTripPhotoFolder_(trip) {
+  if (!trip || typeof trip !== "object") {
+    return null;
+  }
+
+  try {
+    const folder = getOrCreateTripPhotosFolder_(trip);
+    trip.photoFolderError = "";
+    return folder;
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error || "");
+    trip.photoFolderError = message;
+    Logger.log("Trip photo folder error: " + message);
+    return null;
+  }
+}
+
+function getOrCreateTripPhotosFolder_(trip) {
+  if (!trip || typeof trip !== "object") {
+    throw new Error("Viaje invalido para carpeta de fotos.");
+  }
+
+  const tripId = ensureTripId_(trip);
+  if (!tripId) {
+    throw new Error("No se puede crear carpeta: viaje sin id.");
+  }
+
+  const currentFolderId = String(trip.photoFolderId || "").trim();
+  if (currentFolderId) {
+    try {
+      const existingFolder = DriveApp.getFolderById(currentFolderId);
+      trip.photoFolderName = existingFolder.getName();
+      trip.photoFolderError = "";
+      return existingFolder;
+    } catch (_error) {
+      // Si el id guardado ya no existe o no es accesible, se recrea carpeta.
+    }
+  }
+
+  const rootFolder = getOrCreatePhotosRootFolder_();
+  const baseName = buildTripPhotosFolderName_(trip);
+  const finalFolderName = makeUniqueChildFolderName_(rootFolder, baseName);
+  const newFolder = rootFolder.createFolder(finalFolderName);
+
+  trip.photoFolderId = newFolder.getId();
+  trip.photoFolderName = newFolder.getName();
+  trip.photoFolderError = "";
+  return newFolder;
+}
+
+function buildTripPhotosFolderName_(trip) {
+  const tripName = String(trip && trip.name ? trip.name : "").trim() || "Viaje";
+  const destination = getTripDestination_(trip);
+  return sanitizeDriveFolderName_(tripName + " - " + destination);
+}
+
+function makeUniqueChildFolderName_(parentFolder, baseName) {
+  const normalizedBase = String(baseName || "").trim() || "Viaje - Sin destino";
+  let candidate = normalizedBase;
+  let counter = 2;
+
+  while (parentFolder.getFoldersByName(candidate).hasNext()) {
+    const suffix = " (" + counter + ")";
+    const maxBaseLength = Math.max(1, 200 - suffix.length);
+    const trimmedBase = normalizedBase.substring(0, maxBaseLength).trim();
+    candidate = trimmedBase + suffix;
+    counter += 1;
+  }
+
+  return candidate;
+}
+
+function sanitizeDriveFolderName_(value) {
+  let text = String(value || "").trim();
+  text = text.replace(/[\\\/]+/g, "-");
+  text = text.replace(/\s+/g, " ").trim();
+
+  if (text.length > 200) {
+    text = text.substring(0, 200).trim();
+  }
+  if (!text) {
+    return "Viaje - Sin destino";
+  }
+  return text;
 }
 
 function extensionFromMimeType_(mimeType) {
@@ -448,11 +537,32 @@ function buildDriveFileUrl_(fileId) {
 }
 
 function authorizeDriveAccess() {
-  const folder = getOrCreatePhotosFolder_();
+  const rootFolder = getOrCreatePhotosRootFolder_();
+  const state = readStoredState_();
+  const trips = Array.isArray(state.trips) ? state.trips : [];
+  const tripFolders = [];
+
+  for (let i = 0; i < trips.length; i += 1) {
+    const trip = trips[i];
+    const folder = ensureTripPhotoFolder_(trip);
+    if (!folder) {
+      continue;
+    }
+    tripFolders.push({
+      tripId: String(getTripId_(trip) || ""),
+      folderId: folder.getId(),
+      folderName: folder.getName(),
+    });
+  }
+
+  writeStoredStatePayload_(JSON.stringify(state), new Date().toISOString());
+
   return {
     ok: true,
-    folderId: folder.getId(),
-    folderName: folder.getName(),
+    folderId: rootFolder.getId(),
+    folderName: rootFolder.getName(),
+    tripFolderCount: tripFolders.length,
+    tripFolders: tripFolders,
   };
 }
 
