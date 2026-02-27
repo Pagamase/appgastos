@@ -600,10 +600,15 @@ function renderSummary() {
       if (expense.billable) {
         acc.totalBillable += expense.amount;
       }
-      acc.byCategory[expense.category] = (acc.byCategory[expense.category] || 0) + expense.amount;
+      const dayKey = safeTrim(expense.date) || todayIso();
+      if (!acc.byDay[dayKey]) {
+        acc.byDay[dayKey] = { total: 0, count: 0 };
+      }
+      acc.byDay[dayKey].total += expense.amount;
+      acc.byDay[dayKey].count += 1;
       return acc;
     },
-    { totalSpent: 0, totalBillable: 0, byCategory: {} },
+    { totalSpent: 0, totalBillable: 0, byDay: {} },
   );
 
   const budget = activeTrip.budget || 0;
@@ -621,26 +626,30 @@ function renderSummary() {
   refs.budgetFill.style.width = `${visualUsage}%`;
   refs.budgetLabel.textContent = budget > 0 ? `${Math.round(usage)}%` : "Sin presupuesto";
 
-  const categoryEntries = Object.entries(totals.byCategory)
-    .filter((entry) => entry[1] > 0)
-    .sort((a, b) => b[1] - a[1]);
+  const dayEntries = Object.entries(totals.byDay).sort((a, b) => {
+    const aRank = Date.parse(`${a[0]}T00:00:00`);
+    const bRank = Date.parse(`${b[0]}T00:00:00`);
+    if (Number.isFinite(aRank) && Number.isFinite(bRank)) {
+      return bRank - aRank;
+    }
+    return b[0].localeCompare(a[0]);
+  });
 
-  if (categoryEntries.length === 0) {
+  if (dayEntries.length === 0) {
     refs.categoryBreakdown.innerHTML = '<p class="empty-state">Todavia no hay gastos cargados.</p>';
     return;
   }
 
-  const maxCategoryValue = categoryEntries[0][1];
-  refs.categoryBreakdown.innerHTML = categoryEntries
-    .map(([category, value]) => {
-      const width = Math.max(6, (value / maxCategoryValue) * 100);
+  refs.categoryBreakdown.innerHTML = dayEntries
+    .map(([dayKey, data]) => {
+      const countLabel = data.count === 1 ? "1 gasto" : `${data.count} gastos`;
       return `
         <div class="category-row">
           <div class="category-head">
-            <span>${escapeHtml(category)}</span>
-            <strong>${formatCurrency(value)}</strong>
+            <span>${escapeHtml(formatDate(dayKey))}</span>
+            <strong>${formatCurrency(data.total)}</strong>
           </div>
-          <div class="category-line"><span style="width: ${width}%"></span></div>
+          <p class="day-meta">${escapeHtml(countLabel)}</p>
         </div>
       `;
     })

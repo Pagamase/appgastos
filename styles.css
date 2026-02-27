@@ -310,18 +310,10 @@ h2 {
   font-size: 0.9rem;
 }
 
-.category-line {
-  height: 8px;
-  background: rgba(22, 35, 29, 0.12);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.category-line span {
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #5ca98b, #208860);
+.day-meta {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 .filters {
