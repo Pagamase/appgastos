@@ -102,6 +102,7 @@ function cacheRefs() {
   refs.listTitle = document.getElementById("list-title");
   refs.searchExpense = document.getElementById("search-expense");
   refs.filterCategory = document.getElementById("filter-category");
+  refs.filterDate = document.getElementById("filter-date");
   refs.expenseList = document.getElementById("expense-list");
   refs.expenseEmpty = document.getElementById("expense-empty");
 
@@ -122,6 +123,7 @@ function bindEvents() {
 
   refs.searchExpense.addEventListener("input", renderExpenses);
   refs.filterCategory.addEventListener("change", renderExpenses);
+  refs.filterDate.addEventListener("change", renderExpenses);
   refs.exportCsv.addEventListener("click", onExportCsv);
 
   refs.syncNow.addEventListener("click", () => {
@@ -667,12 +669,16 @@ function renderExpenses() {
 
   const search = refs.searchExpense.value.trim().toLowerCase();
   const categoryFilter = refs.filterCategory.value;
+  const dateFilter = safeTrim(refs.filterDate.value);
 
   const filtered = activeTrip.expenses
     .slice()
     .sort(sortExpensesDesc)
     .filter((expense) => {
       if (categoryFilter !== "all" && expense.category !== categoryFilter) {
+        return false;
+      }
+      if (dateFilter && safeTrim(expense.date) !== dateFilter) {
         return false;
       }
 
