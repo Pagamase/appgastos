@@ -93,7 +93,6 @@ function cacheRefs() {
   refs.totalSpent = document.getElementById("total-spent");
   refs.totalBudget = document.getElementById("total-budget");
   refs.totalRemaining = document.getElementById("total-remaining");
-  refs.totalBillable = document.getElementById("total-billable");
   refs.budgetFill = document.getElementById("budget-fill");
   refs.budgetLabel = document.getElementById("budget-label");
   refs.categoryBreakdown = document.getElementById("category-breakdown");
@@ -252,7 +251,6 @@ async function onExpenseSubmit(event) {
   const amountRaw = safeTrim(formData.get("amount"));
   const paymentMethod = safeTrim(formData.get("paymentMethod"));
   const notes = safeTrim(formData.get("notes"));
-  const billable = formData.get("billable") === "true";
   const photoFile = formData.get("photo");
 
   if (!description) {
@@ -295,7 +293,6 @@ async function onExpenseSubmit(event) {
     editingExpense.description = description;
     editingExpense.amount = amount;
     editingExpense.paymentMethod = paymentMethod || editingExpense.paymentMethod || "Otro";
-    editingExpense.billable = billable;
     editingExpense.notes = notes;
 
     if (hasNewPhoto) {
@@ -313,7 +310,6 @@ async function onExpenseSubmit(event) {
       description,
       amount,
       paymentMethod,
-      billable,
       notes,
       photoDataUrl,
       photoName,
@@ -432,7 +428,6 @@ function fillExpenseFormForEdit(expense) {
   refs.expenseForm.elements.description.value = expense.description || "";
   refs.expenseForm.elements.amount.value = String(expense.amount || "");
   refs.expenseForm.elements.paymentMethod.value = expense.paymentMethod || "Otro";
-  refs.expenseForm.elements.billable.checked = Boolean(expense.billable);
   refs.expenseForm.elements.notes.value = expense.notes || "";
   refs.expensePhoto.value = "";
 }
@@ -505,7 +500,6 @@ function onExportCsv() {
     "Descripcion",
     "Importe",
     "MedioPago",
-    "Facturable",
     "Notas",
     "Foto",
   ];
@@ -519,7 +513,6 @@ function onExportCsv() {
       expense.description,
       expense.amount.toFixed(2),
       expense.paymentMethod,
-      expense.billable ? "si" : "no",
       expense.notes,
       expense.photoUrl || "",
     ]);
@@ -561,9 +554,6 @@ function buildTripReportHtml(trip) {
     (acc, expense) => {
       const amount = toExpenseAmount(expense.amount);
       acc.totalSpent += amount;
-      if (expense.billable) {
-        acc.totalBillable += amount;
-      }
       const dayKey = safeTrim(expense.date) || todayIso();
       if (!acc.byDay[dayKey]) {
         acc.byDay[dayKey] = 0;
@@ -571,7 +561,7 @@ function buildTripReportHtml(trip) {
       acc.byDay[dayKey] += amount;
       return acc;
     },
-    { totalSpent: 0, totalBillable: 0, byDay: {} },
+    { totalSpent: 0, byDay: {} },
   );
 
   const budget = Number(trip.budget) || 0;
@@ -607,7 +597,6 @@ function buildTripReportHtml(trip) {
           <td>${escapeHtml(expense.description)}</td>
           <td class="amount">${escapeHtml(formatCurrency(expense.amount))}</td>
           <td>${escapeHtml(expense.paymentMethod)}</td>
-          <td>${expense.billable ? "Si" : "No"}</td>
           <td>${escapeHtml(expense.notes || "-")}</td>
           <td>${photoCell}</td>
         </tr>
@@ -662,7 +651,6 @@ function buildTripReportHtml(trip) {
     <div class="card"><div class="label">Total gastado</div><div class="value">${escapeHtml(formatCurrency(totals.totalSpent))}</div></div>
     <div class="card"><div class="label">Presupuesto</div><div class="value">${escapeHtml(formatCurrency(budget))}</div></div>
     <div class="card"><div class="label">Disponible</div><div class="value">${escapeHtml(formatCurrency(remaining))}</div></div>
-    <div class="card"><div class="label">Facturable</div><div class="value">${escapeHtml(formatCurrency(totals.totalBillable))}</div></div>
   </div>
 
   <h2>Gasto por Dia</h2>
@@ -684,7 +672,6 @@ function buildTripReportHtml(trip) {
         <th>Descripcion</th>
         <th class="amount">Importe</th>
         <th>Medio de pago</th>
-        <th>Facturable</th>
         <th>Notas</th>
         <th>Foto</th>
       </tr>
@@ -793,7 +780,6 @@ function renderSummary() {
     refs.totalSpent.textContent = formatCurrency(0);
     refs.totalBudget.textContent = formatCurrency(0);
     refs.totalRemaining.textContent = formatCurrency(0);
-    refs.totalBillable.textContent = formatCurrency(0);
     refs.totalRemaining.classList.remove("negative", "positive");
     refs.budgetFill.style.width = "0%";
     refs.budgetLabel.textContent = "0%";
@@ -809,9 +795,6 @@ function renderSummary() {
       }
 
       acc.totalSpent += amount;
-      if (expense.billable) {
-        acc.totalBillable += amount;
-      }
       const dayKey = safeTrim(expense.date) || todayIso();
       if (!acc.byDay[dayKey]) {
         acc.byDay[dayKey] = { total: 0, count: 0 };
@@ -820,7 +803,7 @@ function renderSummary() {
       acc.byDay[dayKey].count += 1;
       return acc;
     },
-    { totalSpent: 0, totalBillable: 0, byDay: {} },
+    { totalSpent: 0, byDay: {} },
   );
 
   const budget = activeTrip.budget || 0;
@@ -829,7 +812,6 @@ function renderSummary() {
   refs.totalSpent.textContent = formatCurrency(totals.totalSpent);
   refs.totalBudget.textContent = formatCurrency(budget);
   refs.totalRemaining.textContent = formatCurrency(remaining);
-  refs.totalBillable.textContent = formatCurrency(totals.totalBillable);
   refs.totalRemaining.classList.toggle("negative", remaining < 0);
   refs.totalRemaining.classList.toggle("positive", remaining >= 0);
 
@@ -918,7 +900,6 @@ function renderExpenseItem(expense) {
     formatDate(expense.date),
     expense.category,
     expense.paymentMethod,
-    expense.billable ? "Facturable" : "No facturable",
   ].join(" | ");
 
   const notes = expense.notes ? `<p class="expense-notes">${escapeHtml(expense.notes)}</p>` : "";
@@ -1263,7 +1244,6 @@ function normalizeExpense(value) {
     description: safeTrim(value.description) || "Gasto",
     amount,
     paymentMethod: safeTrim(value.paymentMethod) || "Otro",
-    billable: Boolean(value.billable),
     notes: safeTrim(value.notes),
     photoDataUrl: safeTrim(value.photoDataUrl),
     photoName: safeTrim(value.photoName),

@@ -763,7 +763,6 @@ function expenseFromSheetRow_(row) {
     description: description || "Gasto",
     amount: amount,
     paymentMethod: paymentMethod || "Otro",
-    billable: false,
     notes: notes,
     photoDataUrl: "",
     photoName: "",

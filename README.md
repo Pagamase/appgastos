@@ -5,7 +5,6 @@ Aplicacion web para registrar gastos de viajes de trabajo, conectada de forma fi
 ## Funciones
 - Crear y gestionar viajes con destino, fechas y presupuesto.
 - Registrar gastos por viaje con categoria, importe, medio de pago y notas.
-- Marcar gastos facturables.
 - Ver resumen de gasto, presupuesto, saldo y desglose por categoria.
 - Buscar y filtrar gastos.
 - Eliminar gastos y viajes.
