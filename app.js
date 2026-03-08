@@ -107,6 +107,7 @@ function cacheRefs() {
   refs.expenseEmpty = document.getElementById("expense-empty");
 
   refs.syncNow = document.getElementById("sync-now");
+  refs.pullNow = document.getElementById("pull-now");
   refs.syncStatus = document.getElementById("sync-status");
 }
 
@@ -128,6 +129,9 @@ function bindEvents() {
 
   refs.syncNow.addEventListener("click", () => {
     void onSyncNow();
+  });
+  refs.pullNow.addEventListener("click", () => {
+    void onPullNow();
   });
 
   document.addEventListener("visibilitychange", () => {
@@ -534,6 +538,21 @@ async function onSyncNow() {
   }
 
   await pushStateToCloud({ updateStatus: true });
+}
+
+async function onPullNow() {
+  if (!hasCloudConfig()) {
+    window.alert("No hay conexion configurada con Google Sheets.");
+    return;
+  }
+
+  const changed = await pullStateFromCloud({
+    updateStatus: true,
+    preserveLocalWhenRemoteEmpty: true,
+  });
+  if (!changed) {
+    renderAll();
+  }
 }
 
 async function onVisibilitySync() {
