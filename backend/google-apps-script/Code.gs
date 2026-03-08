@@ -638,6 +638,9 @@ function syncTripExpensesToSheets_(
       continue;
     }
 
+    // Mantiene el titulo A1:G1 sincronizado si cambian fechas/destino del viaje.
+    writeTripHeaderInA1G1_(resolveResult.sheet, trip);
+
     const expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
     const rows = [];
     let photoCount = 0;

@@ -262,6 +262,10 @@ function cacheRefs() {
   refs.activeTrip = document.getElementById("active-trip");
   refs.deleteTrip = document.getElementById("delete-trip");
   refs.tripEmpty = document.getElementById("trip-empty");
+  refs.tripDatesForm = document.getElementById("trip-dates-form");
+  refs.tripStartDate = document.getElementById("trip-start-date");
+  refs.tripEndDate = document.getElementById("trip-end-date");
+  refs.tripDatesSave = document.getElementById("trip-dates-save");
 
   refs.expenseForm = document.getElementById("expense-form");
   refs.expenseFormTitle = document.getElementById("expense-form-title");
@@ -300,6 +304,9 @@ function bindEvents() {
   refs.tripForm.addEventListener("submit", onTripSubmit);
   refs.activeTrip.addEventListener("change", onActiveTripChange);
   refs.deleteTrip.addEventListener("click", onTripDelete);
+  if (refs.tripDatesForm) {
+    refs.tripDatesForm.addEventListener("submit", onTripDatesSubmit);
+  }
 
   refs.expenseForm.addEventListener("submit", (event) => {
     void onExpenseSubmit(event);
@@ -414,6 +421,38 @@ function onTripDelete() {
   renderAll();
 }
 
+function onTripDatesSubmit(event) {
+  event.preventDefault();
+
+  const activeTrip = getActiveTrip();
+  if (!activeTrip) {
+    window.alert("Primero crea o selecciona un viaje.");
+    return;
+  }
+
+  const formData = new FormData(event.currentTarget);
+  const startDate = safeTrim(formData.get("tripStartDate"));
+  const endDate = safeTrim(formData.get("tripEndDate"));
+
+  if (startDate && endDate && startDate > endDate) {
+    window.alert("La fecha de fin no puede ser anterior al inicio.");
+    return;
+  }
+
+  const outOfRangeExpense = findExpenseOutsideTripRange_(activeTrip.expenses, startDate, endDate);
+  if (outOfRangeExpense) {
+    window.alert(
+      `No se pueden guardar esas fechas. Hay al menos un gasto fuera del rango (${formatDate(outOfRangeExpense.date)} - ${outOfRangeExpense.description}).`,
+    );
+    return;
+  }
+
+  activeTrip.startDate = startDate;
+  activeTrip.endDate = endDate;
+  saveState({ immediateRemote: true });
+  renderAll();
+}
+
 async function onExpenseSubmit(event) {
   event.preventDefault();
 
@@ -446,6 +485,11 @@ async function onExpenseSubmit(event) {
 
   if (!description) {
     window.alert("La descripcion del gasto es obligatoria.");
+    return;
+  }
+
+  if (!isDateWithinTripRange_(date, activeTrip.startDate, activeTrip.endDate)) {
+    window.alert(`La fecha del gasto debe estar dentro del viaje (${buildTripDateRangeLabel_(activeTrip.startDate, activeTrip.endDate)}).`);
     return;
   }
 
@@ -996,6 +1040,8 @@ function renderTripControls() {
     refs.deleteTrip.disabled = true;
     refs.tripEmpty.textContent = "No hay viajes creados.";
     refs.listTitle.textContent = "Selecciona un viaje para ver gastos.";
+    syncTripDateEditor_(null);
+    syncExpenseDateLimits_(null);
     return;
   }
 
@@ -1013,6 +1059,8 @@ function renderTripControls() {
 
   const activeTrip = getActiveTrip();
   if (!activeTrip) {
+    syncTripDateEditor_(null);
+    syncExpenseDateLimits_(null);
     return;
   }
 
@@ -1023,6 +1071,8 @@ function renderTripControls() {
 
   refs.tripEmpty.textContent = `${activeTrip.name}${activeTrip.destination ? ` - ${activeTrip.destination}` : ""}${datePart}`;
   refs.listTitle.textContent = `Viaje activo: ${activeTrip.name}`;
+  syncTripDateEditor_(activeTrip);
+  syncExpenseDateLimits_(activeTrip);
 }
 
 function renderSummary() {
@@ -1666,6 +1716,110 @@ function enforceActiveTrip() {
 
 function getActiveTrip() {
   return state.trips.find((trip) => trip.id === state.activeTripId) || null;
+}
+
+function syncTripDateEditor_(trip) {
+  if (!refs.tripStartDate || !refs.tripEndDate || !refs.tripDatesSave) {
+    return;
+  }
+
+  if (!trip) {
+    refs.tripStartDate.value = "";
+    refs.tripEndDate.value = "";
+    refs.tripStartDate.disabled = true;
+    refs.tripEndDate.disabled = true;
+    refs.tripDatesSave.disabled = true;
+    return;
+  }
+
+  refs.tripStartDate.value = safeTrim(trip.startDate);
+  refs.tripEndDate.value = safeTrim(trip.endDate);
+  refs.tripStartDate.disabled = false;
+  refs.tripEndDate.disabled = false;
+  refs.tripDatesSave.disabled = false;
+}
+
+function syncExpenseDateLimits_(trip) {
+  if (!refs.expenseDate) {
+    return;
+  }
+
+  const startDate = safeTrim(trip && trip.startDate);
+  const endDate = safeTrim(trip && trip.endDate);
+
+  if (startDate) {
+    refs.expenseDate.min = startDate;
+  } else {
+    refs.expenseDate.removeAttribute("min");
+  }
+
+  if (endDate) {
+    refs.expenseDate.max = endDate;
+  } else {
+    refs.expenseDate.removeAttribute("max");
+  }
+
+  const currentValue = safeTrim(refs.expenseDate.value);
+  if (!currentValue || (!uiState.editingExpenseId && !isDateWithinTripRange_(currentValue, startDate, endDate))) {
+    refs.expenseDate.value = clampDateToTripRange_(currentValue || todayIso(), startDate, endDate);
+  }
+}
+
+function clampDateToTripRange_(dateValue, startDate, endDate) {
+  let date = safeTrim(dateValue) || todayIso();
+  const start = safeTrim(startDate);
+  const end = safeTrim(endDate);
+
+  if (start && date < start) {
+    date = start;
+  }
+  if (end && date > end) {
+    date = end;
+  }
+  return date;
+}
+
+function isDateWithinTripRange_(dateValue, startDate, endDate) {
+  const date = safeTrim(dateValue);
+  const start = safeTrim(startDate);
+  const end = safeTrim(endDate);
+
+  if (!date) {
+    return false;
+  }
+  if (start && date < start) {
+    return false;
+  }
+  if (end && date > end) {
+    return false;
+  }
+  return true;
+}
+
+function findExpenseOutsideTripRange_(expenses, startDate, endDate) {
+  const list = Array.isArray(expenses) ? expenses : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const expense = list[i];
+    if (!isDateWithinTripRange_(safeTrim(expense && expense.date), startDate, endDate)) {
+      return expense;
+    }
+  }
+  return null;
+}
+
+function buildTripDateRangeLabel_(startDate, endDate) {
+  const start = safeTrim(startDate);
+  const end = safeTrim(endDate);
+  if (start && end) {
+    return `${formatDate(start)} a ${formatDate(end)}`;
+  }
+  if (start) {
+    return `desde ${formatDate(start)}`;
+  }
+  if (end) {
+    return `hasta ${formatDate(end)}`;
+  }
+  return "sin rango definido";
 }
 
 function setOptions(select, options, withAllOption = false) {
