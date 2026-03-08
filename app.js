@@ -499,6 +499,26 @@ async function onExpenseSubmit(event) {
     return;
   }
 
+  const duplicateExpense = findPotentialDuplicateExpense_(
+    activeTrip.expenses,
+    {
+      date,
+      category,
+      description,
+      amount,
+      paymentMethod,
+    },
+    editingExpense ? editingExpense.id : "",
+  );
+  if (duplicateExpense) {
+    const allowDuplicate = window.confirm(
+      `Parece un gasto duplicado (${formatDate(duplicateExpense.date)} - ${duplicateExpense.description} - ${formatCurrency(duplicateExpense.amount)}). Quieres guardarlo igualmente?`,
+    );
+    if (!allowDuplicate) {
+      return;
+    }
+  }
+
   let photoDataUrl = "";
   let photoName = "";
   let hasNewPhoto = false;
@@ -1820,6 +1840,62 @@ function buildTripDateRangeLabel_(startDate, endDate) {
     return `hasta ${formatDate(end)}`;
   }
   return "sin rango definido";
+}
+
+function findPotentialDuplicateExpense_(expenses, candidateExpense, ignoreExpenseId = "") {
+  const list = Array.isArray(expenses) ? expenses : [];
+  const ignoreId = safeTrim(ignoreExpenseId);
+  const candidateFingerprint = expenseDuplicateFingerprint_(candidateExpense);
+  if (!candidateFingerprint) {
+    return null;
+  }
+
+  for (let i = 0; i < list.length; i += 1) {
+    const current = list[i];
+    if (!current) {
+      continue;
+    }
+    if (ignoreId && safeTrim(current.id) === ignoreId) {
+      continue;
+    }
+    if (expenseDuplicateFingerprint_(current) === candidateFingerprint) {
+      return current;
+    }
+  }
+
+  return null;
+}
+
+function expenseDuplicateFingerprint_(expense) {
+  if (!expense || typeof expense !== "object") {
+    return "";
+  }
+
+  const date = safeTrim(expense.date);
+  const category = normalizeCategory(expense.category);
+  const description = normalizeDuplicateText_(expense.description);
+  const paymentMethod = normalizeDuplicateText_(expense.paymentMethod);
+  const amount = normalizeDuplicateAmount_(expense.amount);
+
+  if (!date || !description || !amount) {
+    return "";
+  }
+
+  return [date, category, description, amount, paymentMethod].join("|");
+}
+
+function normalizeDuplicateText_(value) {
+  return safeTrim(value)
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeDuplicateAmount_(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "";
+  }
+  return numeric.toFixed(2);
 }
 
 function setOptions(select, options, withAllOption = false) {
