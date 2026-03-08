@@ -98,6 +98,7 @@ function cacheRefs() {
   refs.budgetLabel = document.getElementById("budget-label");
   refs.categoryBreakdown = document.getElementById("category-breakdown");
   refs.exportCsv = document.getElementById("export-csv");
+  refs.exportPdf = document.getElementById("export-pdf");
 
   refs.listTitle = document.getElementById("list-title");
   refs.searchExpense = document.getElementById("search-expense");
@@ -126,6 +127,7 @@ function bindEvents() {
   refs.filterCategory.addEventListener("change", renderExpenses);
   refs.filterDate.addEventListener("change", renderExpenses);
   refs.exportCsv.addEventListener("click", onExportCsv);
+  refs.exportPdf.addEventListener("click", onExportPdf);
 
   refs.syncNow.addEventListener("click", () => {
     void onSyncNow();
@@ -529,6 +531,176 @@ function onExportCsv() {
   const nameSafe = activeTrip.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const fileName = `gastos_${nameSafe || "viaje"}.csv`;
   downloadCsv(fileName, csv);
+}
+
+function onExportPdf() {
+  const activeTrip = getActiveTrip();
+  if (!activeTrip || activeTrip.expenses.length === 0) {
+    window.alert("No hay gastos para exportar en el viaje activo.");
+    return;
+  }
+
+  const printWindow = window.open("", "_blank", "noopener,noreferrer");
+  if (!printWindow) {
+    window.alert("No se pudo abrir la vista de impresion. Revisa el bloqueador de ventanas.");
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(buildTripReportHtml(activeTrip));
+  printWindow.document.close();
+}
+
+function buildTripReportHtml(trip) {
+  const expenses = trip.expenses
+    .slice()
+    .filter((expense) => toExpenseAmount(expense.amount) > 0)
+    .sort(sortExpensesDesc);
+
+  const totals = expenses.reduce(
+    (acc, expense) => {
+      const amount = toExpenseAmount(expense.amount);
+      acc.totalSpent += amount;
+      if (expense.billable) {
+        acc.totalBillable += amount;
+      }
+      const dayKey = safeTrim(expense.date) || todayIso();
+      if (!acc.byDay[dayKey]) {
+        acc.byDay[dayKey] = 0;
+      }
+      acc.byDay[dayKey] += amount;
+      return acc;
+    },
+    { totalSpent: 0, totalBillable: 0, byDay: {} },
+  );
+
+  const budget = Number(trip.budget) || 0;
+  const remaining = budget - totals.totalSpent;
+  const dayRows = Object.entries(totals.byDay)
+    .sort((a, b) => {
+      const aRank = Date.parse(`${a[0]}T00:00:00`);
+      const bRank = Date.parse(`${b[0]}T00:00:00`);
+      if (Number.isFinite(aRank) && Number.isFinite(bRank)) {
+        return aRank - bRank;
+      }
+      return a[0].localeCompare(b[0]);
+    })
+    .map(
+      ([day, amount]) => `
+        <tr>
+          <td>${escapeHtml(formatDate(day))}</td>
+          <td class="amount">${escapeHtml(formatCurrency(amount))}</td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  const expenseRows = expenses
+    .map((expense) => {
+      const photoCell = expense.photoUrl
+        ? `<a href="${escapeHtml(expense.photoUrl)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
+        : "-";
+      return `
+        <tr>
+          <td>${escapeHtml(formatDate(expense.date))}</td>
+          <td>${escapeHtml(expense.category)}</td>
+          <td>${escapeHtml(expense.description)}</td>
+          <td class="amount">${escapeHtml(formatCurrency(expense.amount))}</td>
+          <td>${escapeHtml(expense.paymentMethod)}</td>
+          <td>${expense.billable ? "Si" : "No"}</td>
+          <td>${escapeHtml(expense.notes || "-")}</td>
+          <td>${photoCell}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const tripDateRange =
+    trip.startDate || trip.endDate
+      ? `${trip.startDate ? formatDate(trip.startDate) : "?"} - ${trip.endDate ? formatDate(trip.endDate) : "?"}`
+      : "Sin fechas";
+
+  const generatedAt = new Date().toLocaleString("es-ES");
+  const title = `Reporte de Gastos - ${trip.name || "Viaje"}`;
+
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    h2 { margin: 24px 0 8px; font-size: 18px; }
+    p { margin: 4px 0; }
+    .meta { margin-bottom: 16px; }
+    .totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .card { border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
+    .label { color: #555; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .value { font-weight: 700; font-size: 16px; margin-top: 2px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; vertical-align: top; }
+    th { background: #f6f6f6; text-align: left; }
+    td.amount { text-align: right; white-space: nowrap; }
+    .muted { color: #666; font-size: 12px; }
+    @media print {
+      body { margin: 10mm; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  <p class="muted">Generado: ${escapeHtml(generatedAt)}</p>
+  <div class="meta">
+    <p><strong>Viaje:</strong> ${escapeHtml(trip.name || "Viaje")}</p>
+    <p><strong>Destino:</strong> ${escapeHtml(trip.destination || "Sin destino")}</p>
+    <p><strong>Fechas:</strong> ${escapeHtml(tripDateRange)}</p>
+  </div>
+
+  <div class="totals">
+    <div class="card"><div class="label">Total gastado</div><div class="value">${escapeHtml(formatCurrency(totals.totalSpent))}</div></div>
+    <div class="card"><div class="label">Presupuesto</div><div class="value">${escapeHtml(formatCurrency(budget))}</div></div>
+    <div class="card"><div class="label">Disponible</div><div class="value">${escapeHtml(formatCurrency(remaining))}</div></div>
+    <div class="card"><div class="label">Facturable</div><div class="value">${escapeHtml(formatCurrency(totals.totalBillable))}</div></div>
+  </div>
+
+  <h2>Gasto por Dia</h2>
+  <table>
+    <thead>
+      <tr><th>Dia</th><th class="amount">Importe</th></tr>
+    </thead>
+    <tbody>
+      ${dayRows || '<tr><td colspan="2">Sin datos</td></tr>'}
+    </tbody>
+  </table>
+
+  <h2>Detalle de Gastos</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Categoria</th>
+        <th>Descripcion</th>
+        <th class="amount">Importe</th>
+        <th>Medio de pago</th>
+        <th>Facturable</th>
+        <th>Notas</th>
+        <th>Foto</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${expenseRows}
+    </tbody>
+  </table>
+
+  <script>
+    window.addEventListener("load", function () {
+      setTimeout(function () { window.print(); }, 200);
+    });
+  </script>
+</body>
+</html>`;
 }
 
 async function onSyncNow() {
