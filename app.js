@@ -9,6 +9,7 @@ const REMOTE_SAVE_DEBOUNCE_MS = 700;
 const MAX_PHOTO_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_PHOTO_SIDE = 1400;
 const PHOTO_JPEG_QUALITY = 0.78;
+const REPORT_QUERY_PARAM = "reportTripId";
 
 const CATEGORIES = [
   "Desayuno",
@@ -65,12 +66,195 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function init() {
+  const reportTripId = getReportTripIdFromUrl_();
+  if (reportTripId) {
+    await initSharedReportMode_(reportTripId);
+    return;
+  }
+
   cacheRefs();
   populateStaticSelects();
   refs.expenseDate.value = todayIso();
   bindEvents();
   await loadState();
   renderAll();
+}
+
+async function initSharedReportMode_(tripId) {
+  document.body.innerHTML =
+    '<main class="app-shell"><section class="panel"><p class="muted">Cargando reporte de viaje...</p></section></main>';
+
+  if (!hasCloudConfig()) {
+    renderSharedReportError_("No hay conexion configurada para cargar el reporte.");
+    return;
+  }
+
+  try {
+    const response = await requestCloud("load");
+    const remoteState = normalizeStatePayload(response.state);
+    const trip = remoteState.trips.find((item) => item.id === tripId);
+    if (!trip) {
+      renderSharedReportError_("No se encontro el viaje solicitado o no existe acceso.");
+      return;
+    }
+
+    document.body.innerHTML = buildSharedTripReportHtml_(trip, String(response.updatedAt || ""));
+    document.title = `Reporte - ${trip.name || "Viaje"}`;
+  } catch (error) {
+    console.error("No se pudo cargar reporte compartido:", error);
+    renderSharedReportError_("No se pudo cargar el reporte en este momento.");
+  }
+}
+
+function renderSharedReportError_(message) {
+  const appLink = escapeHtml(`${window.location.origin}${window.location.pathname}`);
+  document.body.innerHTML = `
+    <main class="app-shell">
+      <section class="panel">
+        <h2>Reporte no disponible</h2>
+        <p class="muted">${escapeHtml(message)}</p>
+        <div class="action-row">
+          <a class="btn secondary" href="${appLink}">Abrir app</a>
+        </div>
+      </section>
+    </main>
+  `;
+  document.title = "Reporte no disponible";
+}
+
+function buildSharedTripReportHtml_(trip, updatedAtIso) {
+  const expenses = trip.expenses
+    .slice()
+    .filter((expense) => toExpenseAmount(expense.amount) > 0)
+    .sort(sortExpensesDesc);
+
+  const totals = expenses.reduce(
+    (acc, expense) => {
+      const amount = toExpenseAmount(expense.amount);
+      acc.totalSpent += amount;
+      const dayKey = safeTrim(expense.date) || todayIso();
+      if (!acc.byDay[dayKey]) {
+        acc.byDay[dayKey] = 0;
+      }
+      acc.byDay[dayKey] += amount;
+      return acc;
+    },
+    { totalSpent: 0, byDay: {} },
+  );
+
+  const budget = Number(trip.budget) || 0;
+  const remaining = budget - totals.totalSpent;
+  const generatedLabel = updatedAtIso
+    ? new Date(updatedAtIso).toLocaleString("es-ES")
+    : new Date().toLocaleString("es-ES");
+  const appLink = escapeHtml(`${window.location.origin}${window.location.pathname}`);
+
+  const dayRows = Object.entries(totals.byDay)
+    .sort((a, b) => {
+      const aRank = Date.parse(`${a[0]}T00:00:00`);
+      const bRank = Date.parse(`${b[0]}T00:00:00`);
+      if (Number.isFinite(aRank) && Number.isFinite(bRank)) {
+        return bRank - aRank;
+      }
+      return b[0].localeCompare(a[0]);
+    })
+    .map(
+      ([day, amount]) => `
+        <tr>
+          <td>${escapeHtml(formatDate(day))}</td>
+          <td class="amount">${escapeHtml(formatCurrency(amount))}</td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  const expenseRows = expenses
+    .map((expense) => {
+      const photoLink = safeTrim(expense.photoUrl)
+        ? `<a href="${escapeHtml(expense.photoUrl)}" target="_blank" rel="noopener noreferrer">Ver foto</a>`
+        : "-";
+      return `
+        <tr>
+          <td>${escapeHtml(formatDate(expense.date))}</td>
+          <td>${escapeHtml(expense.category)}</td>
+          <td>${escapeHtml(expense.description)}</td>
+          <td class="amount">${escapeHtml(formatCurrency(expense.amount))}</td>
+          <td>${escapeHtml(expense.paymentMethod)}</td>
+          <td>${escapeHtml(expense.notes || "-")}</td>
+          <td>${photoLink}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const tripDateRange =
+    trip.startDate || trip.endDate
+      ? `${trip.startDate ? formatDate(trip.startDate) : "?"} - ${trip.endDate ? formatDate(trip.endDate) : "?"}`
+      : "Sin fechas";
+
+  return `
+    <main class="app-shell">
+      <section class="panel">
+        <div class="section-head">
+          <h2>Reporte de viaje</h2>
+          <a class="btn ghost" href="${appLink}">Abrir app</a>
+        </div>
+        <p class="muted">Actualizado: ${escapeHtml(generatedLabel)}</p>
+        <p><strong>Viaje:</strong> ${escapeHtml(trip.name || "Viaje")}</p>
+        <p><strong>Destino:</strong> ${escapeHtml(trip.destination || "Sin destino")}</p>
+        <p><strong>Fechas:</strong> ${escapeHtml(tripDateRange)}</p>
+      </section>
+
+      <section class="panel">
+        <div class="summary-grid">
+          <article class="metric-card">
+            <span>Total gastado</span>
+            <strong>${escapeHtml(formatCurrency(totals.totalSpent))}</strong>
+          </article>
+          <article class="metric-card">
+            <span>Presupuesto</span>
+            <strong>${escapeHtml(formatCurrency(budget))}</strong>
+          </article>
+          <article class="metric-card">
+            <span>Disponible</span>
+            <strong class="${remaining < 0 ? "negative" : "positive"}">${escapeHtml(formatCurrency(remaining))}</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Gasto por dia</h2>
+        <table class="report-table">
+          <thead>
+            <tr><th>Dia</th><th class="amount">Importe</th></tr>
+          </thead>
+          <tbody>
+            ${dayRows || '<tr><td colspan="2">Sin datos</td></tr>'}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Detalle de gastos</h2>
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Categoria</th>
+              <th>Descripcion</th>
+              <th class="amount">Importe</th>
+              <th>Medio de pago</th>
+              <th>Notas</th>
+              <th>Foto</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${expenseRows || '<tr><td colspan="7">Sin gastos cargados</td></tr>'}
+          </tbody>
+        </table>
+      </section>
+    </main>
+  `;
 }
 
 function cacheRefs() {
@@ -98,6 +282,7 @@ function cacheRefs() {
   refs.categoryBreakdown = document.getElementById("category-breakdown");
   refs.exportCsv = document.getElementById("export-csv");
   refs.exportPdf = document.getElementById("export-pdf");
+  refs.copyReportLink = document.getElementById("copy-report-link");
 
   refs.listTitle = document.getElementById("list-title");
   refs.searchExpense = document.getElementById("search-expense");
@@ -127,6 +312,9 @@ function bindEvents() {
   refs.filterDate.addEventListener("change", renderExpenses);
   refs.exportCsv.addEventListener("click", onExportCsv);
   refs.exportPdf.addEventListener("click", onExportPdf);
+  refs.copyReportLink.addEventListener("click", () => {
+    void onCopyReportLink();
+  });
 
   refs.syncNow.addEventListener("click", () => {
     void onSyncNow();
@@ -543,6 +731,32 @@ function onExportPdf() {
   printWindow.document.open();
   printWindow.document.write(reportHtml);
   printWindow.document.close();
+}
+
+async function onCopyReportLink() {
+  const activeTrip = getActiveTrip();
+  if (!activeTrip) {
+    window.alert("Primero crea o selecciona un viaje.");
+    return;
+  }
+
+  const reportLink = buildTripReportLink_(activeTrip.id);
+  try {
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      throw new Error("clipboard_unavailable");
+    }
+    await navigator.clipboard.writeText(reportLink);
+    setSyncStatus("Enlace de reporte copiado.", "ok");
+  } catch (_error) {
+    window.prompt("Copia este enlace de reporte:", reportLink);
+    setSyncStatus("Copia manual del enlace de reporte.", "warn");
+  }
+}
+
+function buildTripReportLink_(tripId) {
+  const url = new URL(`${window.location.origin}${window.location.pathname}`);
+  url.searchParams.set(REPORT_QUERY_PARAM, String(tripId || "").trim());
+  return url.toString();
 }
 
 function printReportWithIframeFallback_(trip) {
@@ -1379,6 +1593,15 @@ function toExpenseAmount(value) {
     return 0;
   }
   return numeric;
+}
+
+function getReportTripIdFromUrl_() {
+  try {
+    const url = new URL(window.location.href);
+    return safeTrim(url.searchParams.get(REPORT_QUERY_PARAM));
+  } catch (_error) {
+    return "";
+  }
 }
 
 function normalizeCategory(value) {

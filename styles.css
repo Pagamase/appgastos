@@ -332,6 +332,30 @@ h2 {
   gap: 0.62rem;
 }
 
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.75rem;
+}
+
+.report-table th,
+.report-table td {
+  border: 1px solid rgba(22, 35, 29, 0.14);
+  padding: 0.55rem 0.6rem;
+  font-size: 0.9rem;
+  vertical-align: top;
+}
+
+.report-table th {
+  background: rgba(22, 35, 29, 0.06);
+  text-align: left;
+}
+
+.report-table .amount {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .expense-item {
   display: grid;
   grid-template-columns: 1fr auto;
