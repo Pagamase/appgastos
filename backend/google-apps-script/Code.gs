@@ -17,6 +17,8 @@ const TRIP_MAP_SHEET_NAME = "_TripSheetMap";
 const EXPENSES_START_ROW = 3;
 const EXPENSES_COL_COUNT = 7;
 const PHOTO_FOLDER_NAME = "_FlugeGastosFotos";
+const TRIP_SHEET_METADATA_KEY = "FLUGE_TRIP_ID";
+const TRIP_FOLDER_MARKER_PREFIX = "fluge_trip_id:";
 
 function doGet(e) {
   return handleRequest_(e);
@@ -160,7 +162,12 @@ function cleanupRemovedTrips_(spreadsheet, tripMapSheet, previousState, nextStat
 
     removedTripIds.push(tripId);
 
-    const sheetResult = deleteTripSheetByTripId_(spreadsheet, mapByTripId, tripId);
+    const sheetResult = deleteTripSheetByTripId_(
+      spreadsheet,
+      mapByTripId,
+      tripId,
+      previousTrip,
+    );
     const folderResult = deleteTripFolderForRemovedTrip_(previousTrip);
 
     delete mapByTripId[tripId];
@@ -178,49 +185,42 @@ function cleanupRemovedTrips_(spreadsheet, tripMapSheet, previousState, nextStat
   return report;
 }
 
-function deleteTripSheetByTripId_(spreadsheet, mapByTripId, tripId) {
+function deleteTripSheetByTripId_(spreadsheet, mapByTripId, tripId, trip) {
   const mappedSheetName = String(mapByTripId[tripId] || "").trim();
-  if (!mappedSheetName) {
-    return {
-      status: "skip_no_sheet_mapping",
-      sheetName: "",
-    };
-  }
+  const resolved = resolveTripSheetForDeletion_(
+    spreadsheet,
+    mappedSheetName,
+    tripId,
+    trip,
+  );
 
-  if (
-    mappedSheetName === TEMPLATE_SHEET_NAME ||
-    mappedSheetName === TRIP_MAP_SHEET_NAME
-  ) {
+  if (!resolved.sheet) {
     return {
-      status: "skip_protected_sheet",
-      sheetName: mappedSheetName,
-    };
-  }
-
-  const sheet = spreadsheet.getSheetByName(mappedSheetName);
-  if (!sheet) {
-    return {
-      status: "sheet_not_found",
-      sheetName: mappedSheetName,
+      status: resolved.status,
+      sheetName: resolved.sheetName,
     };
   }
 
   try {
-    spreadsheet.deleteSheet(sheet);
+    const name = resolved.sheet.getName();
+    spreadsheet.deleteSheet(resolved.sheet);
     return {
       status: "sheet_deleted",
-      sheetName: mappedSheetName,
+      sheetName: name,
+      resolvedBy: resolved.resolvedBy,
     };
   } catch (error) {
     return {
       status: "sheet_delete_error",
-      sheetName: mappedSheetName,
+      sheetName: resolved.sheetName,
+      resolvedBy: resolved.resolvedBy,
       error: String(error && error.message ? error.message : error || ""),
     };
   }
 }
 
 function deleteTripFolderForRemovedTrip_(trip) {
+  const tripId = String(getTripId_(trip) || "").trim();
   const folderId = String(trip && trip.photoFolderId ? trip.photoFolderId : "").trim();
   if (folderId) {
     try {
@@ -231,6 +231,7 @@ function deleteTripFolderForRemovedTrip_(trip) {
         status: "folder_deleted",
         folderId: folderId,
         folderName: folderName,
+        resolvedBy: "folder_id",
       };
     } catch (_error) {
       // Si falla por id, intenta resolver por nombre.
@@ -268,14 +269,208 @@ function deleteTripFolderForRemovedTrip_(trip) {
       status: "folder_deleted",
       folderId: resolvedId,
       folderName: resolvedName,
+      resolvedBy: "folder_name",
     };
+  }
+
+  if (tripId) {
+    const byMarker = findTripFolderByMarker_(rootFolder, tripId);
+    if (byMarker) {
+      const resolvedId = byMarker.getId();
+      const resolvedName = byMarker.getName();
+      byMarker.setTrashed(true);
+      return {
+        status: "folder_deleted",
+        folderId: resolvedId,
+        folderName: resolvedName,
+        resolvedBy: "folder_marker",
+      };
+    }
   }
 
   return {
     status: "folder_not_found",
+    tripId: tripId,
     folderId: folderId,
     folderName: String(trip && trip.photoFolderName ? trip.photoFolderName : ""),
   };
+}
+
+function resolveTripSheetForDeletion_(spreadsheet, mappedSheetName, tripId, trip) {
+  if (mappedSheetName) {
+    if (isProtectedSheetName_(mappedSheetName)) {
+      return {
+        sheet: null,
+        sheetName: mappedSheetName,
+        status: "skip_protected_sheet",
+        resolvedBy: "map",
+      };
+    }
+
+    const mappedSheet = spreadsheet.getSheetByName(mappedSheetName);
+    if (mappedSheet) {
+      return {
+        sheet: mappedSheet,
+        sheetName: mappedSheetName,
+        status: "mapped",
+        resolvedBy: "map",
+      };
+    }
+  }
+
+  const byMeta = findTripSheetByMetadata_(spreadsheet, tripId);
+  if (byMeta) {
+    return {
+      sheet: byMeta,
+      sheetName: byMeta.getName(),
+      status: "resolved_by_metadata",
+      resolvedBy: "metadata",
+    };
+  }
+
+  const byHeader = findTripSheetByHeader_(spreadsheet, trip);
+  if (byHeader) {
+    return {
+      sheet: byHeader,
+      sheetName: byHeader.getName(),
+      status: "resolved_by_header",
+      resolvedBy: "header",
+    };
+  }
+
+  const byName = findTripSheetByNamePattern_(spreadsheet, trip);
+  if (byName.status === "ok") {
+    return {
+      sheet: byName.sheet,
+      sheetName: byName.sheet.getName(),
+      status: "resolved_by_name_pattern",
+      resolvedBy: "name_pattern",
+    };
+  }
+
+  if (byName.status === "ambiguous") {
+    return {
+      sheet: null,
+      sheetName: byName.sheetNames.join(", "),
+      status: "ambiguous_sheet_candidates",
+      resolvedBy: "name_pattern",
+    };
+  }
+
+  return {
+    sheet: null,
+    sheetName: mappedSheetName,
+    status: mappedSheetName ? "sheet_not_found" : "skip_no_sheet_mapping",
+    resolvedBy: "none",
+  };
+}
+
+function isProtectedSheetName_(sheetName) {
+  const name = String(sheetName || "").trim();
+  if (!name) {
+    return true;
+  }
+  return (
+    name === TEMPLATE_SHEET_NAME ||
+    name === TRIP_MAP_SHEET_NAME ||
+    name === LEGACY_STORAGE_SHEET_NAME
+  );
+}
+
+function findTripSheetByMetadata_(spreadsheet, tripId) {
+  const id = String(tripId || "").trim();
+  if (!id) {
+    return null;
+  }
+
+  const sheets = spreadsheet.getSheets();
+  for (let i = 0; i < sheets.length; i += 1) {
+    const sheet = sheets[i];
+    const name = sheet.getName();
+    if (isProtectedSheetName_(name)) {
+      continue;
+    }
+    let metadata = [];
+    try {
+      metadata = sheet.getDeveloperMetadata();
+    } catch (_error) {
+      metadata = [];
+    }
+    for (let j = 0; j < metadata.length; j += 1) {
+      const current = metadata[j];
+      if (
+        current.getKey() === TRIP_SHEET_METADATA_KEY &&
+        String(current.getValue() || "").trim() === id
+      ) {
+        return sheet;
+      }
+    }
+  }
+  return null;
+}
+
+function findTripSheetByHeader_(spreadsheet, trip) {
+  if (!trip || typeof trip !== "object") {
+    return null;
+  }
+
+  const expectedHeader = String(buildTripHeaderText_(trip) || "").trim();
+  if (!expectedHeader) {
+    return null;
+  }
+
+  const sheets = spreadsheet.getSheets();
+  for (let i = 0; i < sheets.length; i += 1) {
+    const sheet = sheets[i];
+    const name = sheet.getName();
+    if (isProtectedSheetName_(name)) {
+      continue;
+    }
+    const header = String(sheet.getRange("A1").getDisplayValue() || "").trim();
+    if (header === expectedHeader) {
+      return sheet;
+    }
+  }
+  return null;
+}
+
+function findTripSheetByNamePattern_(spreadsheet, trip) {
+  if (!trip || typeof trip !== "object") {
+    return { status: "none", sheet: null, sheetNames: [] };
+  }
+
+  const base = buildTripSheetBaseName_(trip, TEMPLATE_SHEET_NAME);
+  const baseText = String(base || "").trim();
+  if (!baseText) {
+    return { status: "none", sheet: null, sheetNames: [] };
+  }
+
+  const candidates = [];
+  const sheets = spreadsheet.getSheets();
+  for (let i = 0; i < sheets.length; i += 1) {
+    const sheet = sheets[i];
+    const name = sheet.getName();
+    if (isProtectedSheetName_(name)) {
+      continue;
+    }
+    if (name === baseText || name.indexOf(baseText + " (") === 0) {
+      candidates.push(sheet);
+    }
+  }
+
+  if (candidates.length === 1) {
+    return { status: "ok", sheet: candidates[0], sheetNames: [candidates[0].getName()] };
+  }
+  if (candidates.length > 1) {
+    return {
+      status: "ambiguous",
+      sheet: null,
+      sheetNames: candidates.map(function (item) {
+        return item.getName();
+      }),
+    };
+  }
+  return { status: "none", sheet: null, sheetNames: [] };
 }
 
 function ensureTripSheets_(spreadsheet, tripMapSheet, previousState, nextState, nowIso) {
@@ -302,6 +497,7 @@ function ensureTripSheets_(spreadsheet, tripMapSheet, previousState, nextState, 
     const finalSheetName = makeUniqueSheetName_(spreadsheet, baseName);
     const newSheet = templateSheet.copyTo(spreadsheet);
     newSheet.setName(finalSheetName);
+    attachTripMetadataToSheet_(newSheet, tripId);
     replaceTemplateTokens_(newSheet, trip);
     writeTripHeaderInA1G1_(newSheet, trip);
     appendTripMapRow_(tripMapSheet, tripId, finalSheetName, nowIso);
@@ -412,6 +608,7 @@ function resolveTripSheetForSync_(
   if (mappedSheetName) {
     const mappedSheet = spreadsheet.getSheetByName(mappedSheetName);
     if (mappedSheet) {
+      attachTripMetadataToSheet_(mappedSheet, tripId);
       return {
         sheetName: mappedSheetName,
         sheet: mappedSheet,
@@ -435,6 +632,7 @@ function resolveTripSheetForSync_(
   const finalSheetName = makeUniqueSheetName_(spreadsheet, baseName);
   const newSheet = templateSheet.copyTo(spreadsheet);
   newSheet.setName(finalSheetName);
+  attachTripMetadataToSheet_(newSheet, tripId);
   replaceTemplateTokens_(newSheet, trip);
   writeTripHeaderInA1G1_(newSheet, trip);
 
@@ -607,6 +805,7 @@ function getOrCreateTripPhotosFolder_(trip) {
   if (currentFolderId) {
     try {
       const existingFolder = DriveApp.getFolderById(currentFolderId);
+      markTripFolderMetadata_(existingFolder, tripId);
       trip.photoFolderName = existingFolder.getName();
       trip.photoFolderError = "";
       return existingFolder;
@@ -619,6 +818,7 @@ function getOrCreateTripPhotosFolder_(trip) {
   const baseName = buildTripPhotosFolderName_(trip);
   const existingByName = findExistingTripFolderByName_(rootFolder, trip, baseName);
   if (existingByName) {
+    markTripFolderMetadata_(existingByName, tripId);
     trip.photoFolderId = existingByName.getId();
     trip.photoFolderName = existingByName.getName();
     trip.photoFolderError = "";
@@ -626,6 +826,7 @@ function getOrCreateTripPhotosFolder_(trip) {
   }
   const finalFolderName = makeUniqueChildFolderName_(rootFolder, baseName);
   const newFolder = rootFolder.createFolder(finalFolderName);
+  markTripFolderMetadata_(newFolder, tripId);
 
   trip.photoFolderId = newFolder.getId();
   trip.photoFolderName = newFolder.getName();
@@ -690,6 +891,47 @@ function findExistingTripFolderByName_(rootFolder, trip, baseName) {
     }
   }
 
+  return null;
+}
+
+function markTripFolderMetadata_(folder, tripId) {
+  const id = String(tripId || "").trim();
+  if (!folder || !id) {
+    return;
+  }
+
+  const marker = TRIP_FOLDER_MARKER_PREFIX + id;
+  try {
+    const current = String(folder.getDescription() || "").trim();
+    if (current === marker) {
+      return;
+    }
+    folder.setDescription(marker);
+  } catch (_error) {
+    // No bloquear flujo por metadata de carpeta.
+  }
+}
+
+function findTripFolderByMarker_(rootFolder, tripId) {
+  const id = String(tripId || "").trim();
+  if (!rootFolder || !id) {
+    return null;
+  }
+
+  const marker = TRIP_FOLDER_MARKER_PREFIX + id;
+  const folders = rootFolder.getFolders();
+  while (folders.hasNext()) {
+    const folder = folders.next();
+    let description = "";
+    try {
+      description = String(folder.getDescription() || "").trim();
+    } catch (_error) {
+      description = "";
+    }
+    if (description === marker) {
+      return folder;
+    }
+  }
   return null;
 }
 
@@ -1084,6 +1326,34 @@ function readTripMap_(sheet) {
 
 function appendTripMapRow_(sheet, tripId, sheetName, nowIso) {
   sheet.appendRow([tripId, sheetName, nowIso]);
+}
+
+function attachTripMetadataToSheet_(sheet, tripId) {
+  const id = String(tripId || "").trim();
+  if (!sheet || !id) {
+    return;
+  }
+
+  try {
+    const metadata = sheet.getDeveloperMetadata();
+    let hasExpected = false;
+    for (let i = 0; i < metadata.length; i += 1) {
+      const current = metadata[i];
+      if (current.getKey() !== TRIP_SHEET_METADATA_KEY) {
+        continue;
+      }
+      if (String(current.getValue() || "").trim() === id) {
+        hasExpected = true;
+      } else {
+        current.remove();
+      }
+    }
+    if (!hasExpected) {
+      sheet.addDeveloperMetadata(TRIP_SHEET_METADATA_KEY, id);
+    }
+  } catch (_error) {
+    // No bloquear guardado por metadata auxiliar.
+  }
 }
 
 function removeTripMapRows_(sheet, tripIds) {

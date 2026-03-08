@@ -1336,13 +1336,18 @@ async function pushStateToCloud({ updateStatus = true } = {}) {
 
   try {
     const response = await requestCloud("save", { state: buildSerializableState() });
+    const deletionWarning = summarizeDeletedTripWarnings(response?.deletedTrips);
     if (response && response.state) {
       applyState(normalizeStatePayload(response.state));
       saveLocalStateOnly();
       renderAll();
     }
     if (updateStatus) {
-      setSyncStatus(`En nube (${formatClock(new Date())}).`, "ok");
+      if (deletionWarning) {
+        setSyncStatus(`En nube con aviso: ${deletionWarning}`, "warn");
+      } else {
+        setSyncStatus(`En nube (${formatClock(new Date())}).`, "ok");
+      }
     }
     return true;
   } catch (error) {
@@ -1358,6 +1363,44 @@ async function pushStateToCloud({ updateStatus = true } = {}) {
       queueRemoteSave(true);
     }
   }
+}
+
+function summarizeDeletedTripWarnings(deletedTrips) {
+  if (!Array.isArray(deletedTrips) || deletedTrips.length === 0) {
+    return "";
+  }
+
+  const okSheetStatuses = {
+    sheet_deleted: true,
+    sheet_not_found: true,
+    resolved_by_metadata: true,
+    resolved_by_header: true,
+    resolved_by_name_pattern: true,
+    mapped: true,
+  };
+  const okFolderStatuses = {
+    folder_deleted: true,
+    folder_not_found: true,
+  };
+
+  const warnings = [];
+  for (let i = 0; i < deletedTrips.length; i += 1) {
+    const item = deletedTrips[i] || {};
+    const sheetStatus = String(item?.sheet?.status || "").trim();
+    const folderStatus = String(item?.folder?.status || "").trim();
+    if (sheetStatus && !okSheetStatuses[sheetStatus]) {
+      warnings.push(`hoja:${sheetStatus}`);
+    }
+    if (folderStatus && !okFolderStatuses[folderStatus]) {
+      warnings.push(`carpeta:${folderStatus}`);
+    }
+  }
+
+  if (!warnings.length) {
+    return "";
+  }
+
+  return warnings.slice(0, 3).join(", ");
 }
 
 async function requestCloud(action, payload = {}) {
