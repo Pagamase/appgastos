@@ -407,7 +407,10 @@ function onTripDelete() {
   state.trips = state.trips.filter((trip) => trip.id !== activeTrip.id);
   state.activeTripId = state.trips[0]?.id ?? null;
   exitExpenseEditMode({ resetForm: true });
-  saveState({ immediateRemote: true });
+  saveLocalStateOnly();
+  if (hasCloudConfig()) {
+    void syncDeletedTripToCloud(activeTrip.id);
+  }
   renderAll();
 }
 
@@ -1365,6 +1368,53 @@ async function pushStateToCloud({ updateStatus = true } = {}) {
   }
 }
 
+async function syncDeletedTripToCloud(tripId) {
+  if (!hasCloudConfig()) {
+    return false;
+  }
+
+  const normalizedTripId = safeTrim(tripId);
+  if (!normalizedTripId) {
+    queueRemoteSave(true);
+    return false;
+  }
+
+  if (syncState.saveInFlight) {
+    syncState.hasPendingSave = true;
+    return false;
+  }
+
+  syncState.saveInFlight = true;
+  setSyncStatus("Sincronizando...", "warn");
+
+  try {
+    const response = await requestCloud("delete_trip", { tripId: normalizedTripId });
+    const deletionWarning = summarizeDeletedTripWarnings(response?.deletedTrips);
+    if (response && response.state) {
+      applyState(normalizeStatePayload(response.state));
+      saveLocalStateOnly();
+      renderAll();
+    }
+    if (deletionWarning) {
+      setSyncStatus(`En nube con aviso: ${deletionWarning}`, "warn");
+    } else {
+      setSyncStatus(`En nube (${formatClock(new Date())}).`, "ok");
+    }
+    return true;
+  } catch (error) {
+    console.error("No se pudo borrar viaje en nube:", error);
+    setSyncStatus("Error de nube. Reintentando sincronizacion completa...", "bad");
+    queueRemoteSave(true);
+    return false;
+  } finally {
+    syncState.saveInFlight = false;
+    if (syncState.hasPendingSave) {
+      syncState.hasPendingSave = false;
+      queueRemoteSave(true);
+    }
+  }
+}
+
 function summarizeDeletedTripWarnings(deletedTrips) {
   if (!Array.isArray(deletedTrips) || deletedTrips.length === 0) {
     return "";
@@ -1426,6 +1476,17 @@ async function requestCloud(action, payload = {}) {
         action: "save",
         token: syncState.token,
         state: payload.state,
+      }),
+    });
+  }
+
+  if (action === "delete_trip") {
+    return fetchJson(endpoint, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "delete_trip",
+        token: syncState.token,
+        tripId: payload.tripId,
       }),
     });
   }

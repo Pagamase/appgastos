@@ -46,6 +46,10 @@ function handleRequest_(e) {
       return json_(saveState_(payload.state));
     }
 
+    if (action === "delete_trip") {
+      return json_(deleteTrip_(payload.tripId));
+    }
+
     return json_({ ok: false, error: "unknown_action" });
   } catch (error) {
     return json_({ ok: false, error: String(error && error.message ? error.message : error) });
@@ -136,6 +140,83 @@ function saveState_(rawState) {
     updatedAt: nowIso,
     deletedTrips: deletedTrips,
     createdSheets: createdSheets,
+    syncReport: syncReport,
+  };
+}
+
+function deleteTrip_(rawTripId) {
+  const tripId = String(rawTripId || "").trim();
+  if (!tripId) {
+    return { ok: false, error: "missing_trip_id" };
+  }
+
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const tripMapSheet = getTripMapSheet_(spreadsheet);
+  const previousState = readStoredState_();
+  const previousTrips = Array.isArray(previousState.trips) ? previousState.trips : [];
+
+  let hadTrip = false;
+  const nextTrips = [];
+  for (let i = 0; i < previousTrips.length; i += 1) {
+    const currentTrip = previousTrips[i];
+    const currentId = getTripId_(currentTrip);
+    if (currentId === tripId) {
+      hadTrip = true;
+      continue;
+    }
+    nextTrips.push(currentTrip);
+  }
+
+  if (!hadTrip) {
+    return {
+      ok: true,
+      state: previousState,
+      updatedAt: String(getStoredStatePayload_().updatedAt || ""),
+      deletedTrips: [],
+      createdSheets: [],
+      syncReport: [],
+    };
+  }
+
+  let nextActiveTripId = previousState.activeTripId;
+  if (String(nextActiveTripId || "").trim() === tripId) {
+    nextActiveTripId = nextTrips.length ? String(getTripId_(nextTrips[0]) || "") : null;
+  }
+  if (!String(nextActiveTripId || "").trim()) {
+    nextActiveTripId = nextTrips.length ? String(getTripId_(nextTrips[0]) || "") : null;
+  }
+
+  const state = sanitizeState_({
+    trips: nextTrips,
+    activeTripId: nextActiveTripId,
+  });
+
+  const nowIso = new Date().toISOString();
+  const deletedTrips = cleanupRemovedTrips_(
+    spreadsheet,
+    tripMapSheet,
+    previousState,
+    state,
+  );
+  const mapByTripId = readTripMap_(tripMapSheet);
+  const syncReport = syncTripExpensesToSheets_(
+    spreadsheet,
+    tripMapSheet,
+    state,
+    mapByTripId,
+    nowIso,
+    [],
+  );
+
+  writeStoredStatePayload_(JSON.stringify(state), nowIso);
+  removeLegacyStorageSheetIfPresent_();
+
+  return {
+    ok: true,
+    state: state,
+    updatedAt: nowIso,
+    deletedTrips: deletedTrips,
+    createdSheets: [],
     syncReport: syncReport,
   };
 }
