@@ -367,12 +367,26 @@ function onExpenseListClick(event) {
     return;
   }
 
-  activeTrip.expenses = activeTrip.expenses.filter((item) => item.id !== expenseId);
+  const nextExpenses = activeTrip.expenses.filter((item) => item.id !== expenseId);
+  if (nextExpenses.length === activeTrip.expenses.length) {
+    return;
+  }
+
+  state.trips = state.trips.map((trip) =>
+    trip.id === activeTrip.id
+      ? {
+          ...trip,
+          expenses: nextExpenses,
+        }
+      : trip,
+  );
+
   if (uiState.editingExpenseId === expenseId) {
     exitExpenseEditMode({ resetForm: true });
   }
 
-  saveState();
+  // Borrado se sincroniza al momento para evitar desajustes visuales/local-nube.
+  saveState({ immediateRemote: true });
   renderAll();
 }
 
@@ -598,15 +612,20 @@ function renderSummary() {
 
   const totals = activeTrip.expenses.reduce(
     (acc, expense) => {
-      acc.totalSpent += expense.amount;
+      const amount = toExpenseAmount(expense && expense.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return acc;
+      }
+
+      acc.totalSpent += amount;
       if (expense.billable) {
-        acc.totalBillable += expense.amount;
+        acc.totalBillable += amount;
       }
       const dayKey = safeTrim(expense.date) || todayIso();
       if (!acc.byDay[dayKey]) {
         acc.byDay[dayKey] = { total: 0, count: 0 };
       }
-      acc.byDay[dayKey].total += expense.amount;
+      acc.byDay[dayKey].total += amount;
       acc.byDay[dayKey].count += 1;
       return acc;
     },
@@ -1146,6 +1165,14 @@ function createId() {
 
 function parseAmount(value) {
   return Number.parseFloat(String(value).replace(",", "."));
+}
+
+function toExpenseAmount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return numeric;
 }
 
 function normalizeCategory(value) {
