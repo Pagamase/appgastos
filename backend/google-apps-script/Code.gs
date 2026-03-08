@@ -70,10 +70,20 @@ function loadState_() {
     parsed = { trips: [], activeTripId: null };
   }
 
+  const state = sanitizeState_(parsed);
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const changedFromSheet = reconcileStateExpensesFromSheets_(spreadsheet, state);
+  let finalUpdatedAt = updatedAt;
+
+  if (changedFromSheet) {
+    finalUpdatedAt = new Date().toISOString();
+    writeStoredStatePayload_(JSON.stringify(state), finalUpdatedAt);
+  }
+
   return {
     ok: true,
-    state: sanitizeState_(parsed),
-    updatedAt: updatedAt,
+    state: state,
+    updatedAt: finalUpdatedAt,
   };
 }
 
@@ -659,6 +669,220 @@ function toSheetAmount_(value) {
     return 0;
   }
   return numeric;
+}
+
+function reconcileStateExpensesFromSheets_(spreadsheet, state) {
+  const trips = Array.isArray(state && state.trips) ? state.trips : [];
+  if (!trips.length) {
+    return false;
+  }
+
+  const mapByTripId = readTripMap_(getTripMapSheet_(spreadsheet));
+  let changed = false;
+
+  for (let i = 0; i < trips.length; i += 1) {
+    const trip = trips[i];
+    const tripId = getTripId_(trip);
+    if (!tripId) {
+      continue;
+    }
+
+    const sheetName = String(mapByTripId[tripId] || "").trim();
+    if (!sheetName) {
+      continue;
+    }
+
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) {
+      continue;
+    }
+
+    const existingExpenses = Array.isArray(trip.expenses) ? trip.expenses : [];
+    const expensesFromSheet = readExpensesFromTripSheet_(sheet, existingExpenses);
+    if (areExpenseListsEquivalent_(existingExpenses, expensesFromSheet)) {
+      continue;
+    }
+
+    trip.expenses = expensesFromSheet;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function readExpensesFromTripSheet_(sheet, previousExpenses) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < EXPENSES_START_ROW) {
+    return [];
+  }
+
+  const rowCount = lastRow - EXPENSES_START_ROW + 1;
+  const values = sheet
+    .getRange(EXPENSES_START_ROW, 1, rowCount, EXPENSES_COL_COUNT)
+    .getValues();
+  const reusableIds = buildReusableExpenseIds_(previousExpenses);
+  const result = [];
+
+  for (let i = 0; i < values.length; i += 1) {
+    const parsed = expenseFromSheetRow_(values[i]);
+    if (!parsed) {
+      continue;
+    }
+
+    parsed.id = takeReusableExpenseId_(reusableIds, parsed) || Utilities.getUuid();
+    result.push(parsed);
+  }
+
+  return result;
+}
+
+function expenseFromSheetRow_(row) {
+  const dateIso = normalizeSheetDateToIso_(row[0]);
+  const category = String(row[1] || "").trim();
+  const description = String(row[2] || "").trim();
+  const amount = Number(row[3]);
+  const paymentMethod = String(row[4] || "").trim();
+  const notes = String(row[5] || "").trim();
+  const photoUrl = String(row[6] || "").trim();
+
+  const hasAnyData = Boolean(
+    dateIso || category || description || paymentMethod || notes || photoUrl || Number.isFinite(amount),
+  );
+  if (!hasAnyData) {
+    return null;
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  return {
+    id: "",
+    date: dateIso || isoDateToday_(),
+    category: category || "Otro",
+    description: description || "Gasto",
+    amount: amount,
+    paymentMethod: paymentMethod || "Otro",
+    billable: false,
+    notes: notes,
+    photoDataUrl: "",
+    photoName: "",
+    photoUrl: photoUrl,
+    photoFileId: extractDriveFileIdFromUrl_(photoUrl),
+    createdAt: Date.now(),
+  };
+}
+
+function buildReusableExpenseIds_(expenses) {
+  const buckets = {};
+  if (!Array.isArray(expenses)) {
+    return buckets;
+  }
+
+  for (let i = 0; i < expenses.length; i += 1) {
+    const expense = expenses[i];
+    const id = String(expense && expense.id ? expense.id : "").trim();
+    if (!id) {
+      continue;
+    }
+
+    const key = expenseFingerprint_(expense);
+    if (!buckets[key]) {
+      buckets[key] = [];
+    }
+    buckets[key].push(id);
+  }
+
+  return buckets;
+}
+
+function takeReusableExpenseId_(buckets, expense) {
+  const key = expenseFingerprint_(expense);
+  const ids = buckets[key];
+  if (!ids || !ids.length) {
+    return "";
+  }
+  return String(ids.shift() || "");
+}
+
+function expenseFingerprint_(expense) {
+  return [
+    String(expense && expense.date ? expense.date : "").trim(),
+    String(expense && expense.category ? expense.category : "").trim(),
+    String(expense && expense.description ? expense.description : "").trim(),
+    normalizeAmountForFingerprint_(expense && expense.amount),
+    String(expense && expense.paymentMethod ? expense.paymentMethod : "").trim(),
+    String(expense && expense.notes ? expense.notes : "").trim(),
+    String(expense && expense.photoUrl ? expense.photoUrl : "").trim(),
+  ].join("|");
+}
+
+function normalizeAmountForFingerprint_(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "0.00";
+  }
+  return amount.toFixed(2);
+}
+
+function areExpenseListsEquivalent_(left, right) {
+  const leftItems = Array.isArray(left) ? left : [];
+  const rightItems = Array.isArray(right) ? right : [];
+
+  if (leftItems.length !== rightItems.length) {
+    return false;
+  }
+
+  for (let i = 0; i < leftItems.length; i += 1) {
+    if (expenseFingerprint_(leftItems[i]) !== expenseFingerprint_(rightItems[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function normalizeSheetDateToIso_(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]") {
+    const dateValue = new Date(value);
+    if (!isNaN(dateValue.getTime())) {
+      return Utilities.formatDate(dateValue, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    }
+  }
+
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return match[1] + "-" + match[2] + "-" + match[3];
+  }
+
+  match = text.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+  if (match) {
+    return match[3] + "-" + match[2] + "-" + match[1];
+  }
+
+  return "";
+}
+
+function isoDateToday_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+function extractDriveFileIdFromUrl_(url) {
+  const text = String(url || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const match = text.match(/\/d\/([^\/\?]+)/);
+  if (!match) {
+    return "";
+  }
+  return String(match[1] || "").trim();
 }
 
 function sanitizeCellText_(value) {
