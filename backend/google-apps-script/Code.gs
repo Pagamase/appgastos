@@ -94,6 +94,12 @@ function saveState_(rawState) {
   const state = sanitizeState_(rawState);
   preserveServerTripMetadata_(previousState, state);
   const nowIso = new Date().toISOString();
+  const deletedTrips = cleanupRemovedTrips_(
+    spreadsheet,
+    tripMapSheet,
+    previousState,
+    state,
+  );
 
   let createdSheets = [];
   let mapByTripId = {};
@@ -126,8 +132,149 @@ function saveState_(rawState) {
     ok: true,
     state: state,
     updatedAt: nowIso,
+    deletedTrips: deletedTrips,
     createdSheets: createdSheets,
     syncReport: syncReport,
+  };
+}
+
+function cleanupRemovedTrips_(spreadsheet, tripMapSheet, previousState, nextState) {
+  const prevTrips = Array.isArray(previousState && previousState.trips)
+    ? previousState.trips
+    : [];
+  if (!prevTrips.length) {
+    return [];
+  }
+
+  const nextTripIds = toTripIdMap_(nextState && nextState.trips);
+  const mapByTripId = readTripMap_(tripMapSheet);
+  const removedTripIds = [];
+  const report = [];
+
+  for (let i = 0; i < prevTrips.length; i += 1) {
+    const previousTrip = prevTrips[i];
+    const tripId = getTripId_(previousTrip);
+    if (!tripId || nextTripIds[tripId]) {
+      continue;
+    }
+
+    removedTripIds.push(tripId);
+
+    const sheetResult = deleteTripSheetByTripId_(spreadsheet, mapByTripId, tripId);
+    const folderResult = deleteTripFolderForRemovedTrip_(previousTrip);
+
+    delete mapByTripId[tripId];
+    report.push({
+      tripId: tripId,
+      sheet: sheetResult,
+      folder: folderResult,
+    });
+  }
+
+  if (removedTripIds.length) {
+    removeTripMapRows_(tripMapSheet, removedTripIds);
+  }
+
+  return report;
+}
+
+function deleteTripSheetByTripId_(spreadsheet, mapByTripId, tripId) {
+  const mappedSheetName = String(mapByTripId[tripId] || "").trim();
+  if (!mappedSheetName) {
+    return {
+      status: "skip_no_sheet_mapping",
+      sheetName: "",
+    };
+  }
+
+  if (
+    mappedSheetName === TEMPLATE_SHEET_NAME ||
+    mappedSheetName === TRIP_MAP_SHEET_NAME
+  ) {
+    return {
+      status: "skip_protected_sheet",
+      sheetName: mappedSheetName,
+    };
+  }
+
+  const sheet = spreadsheet.getSheetByName(mappedSheetName);
+  if (!sheet) {
+    return {
+      status: "sheet_not_found",
+      sheetName: mappedSheetName,
+    };
+  }
+
+  try {
+    spreadsheet.deleteSheet(sheet);
+    return {
+      status: "sheet_deleted",
+      sheetName: mappedSheetName,
+    };
+  } catch (error) {
+    return {
+      status: "sheet_delete_error",
+      sheetName: mappedSheetName,
+      error: String(error && error.message ? error.message : error || ""),
+    };
+  }
+}
+
+function deleteTripFolderForRemovedTrip_(trip) {
+  const folderId = String(trip && trip.photoFolderId ? trip.photoFolderId : "").trim();
+  if (folderId) {
+    try {
+      const folderById = DriveApp.getFolderById(folderId);
+      const folderName = folderById.getName();
+      folderById.setTrashed(true);
+      return {
+        status: "folder_deleted",
+        folderId: folderId,
+        folderName: folderName,
+      };
+    } catch (_error) {
+      // Si falla por id, intenta resolver por nombre.
+    }
+  }
+
+  const rootFolder = getOrCreatePhotosRootFolder_();
+  const candidates = [];
+  const storedName = sanitizeDriveFolderName_(
+    String(trip && trip.photoFolderName ? trip.photoFolderName : ""),
+  );
+  if (storedName) {
+    candidates.push(storedName);
+  }
+
+  const fallbackName = buildTripPhotosFolderName_(trip);
+  if (fallbackName && candidates.indexOf(fallbackName) === -1) {
+    candidates.push(fallbackName);
+  }
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const name = candidates[i];
+    if (!name) {
+      continue;
+    }
+    const folders = rootFolder.getFoldersByName(name);
+    if (!folders.hasNext()) {
+      continue;
+    }
+    const folder = folders.next();
+    const resolvedId = folder.getId();
+    const resolvedName = folder.getName();
+    folder.setTrashed(true);
+    return {
+      status: "folder_deleted",
+      folderId: resolvedId,
+      folderName: resolvedName,
+    };
+  }
+
+  return {
+    status: "folder_not_found",
+    folderId: folderId,
+    folderName: String(trip && trip.photoFolderName ? trip.photoFolderName : ""),
   };
 }
 
@@ -939,6 +1086,38 @@ function appendTripMapRow_(sheet, tripId, sheetName, nowIso) {
   sheet.appendRow([tripId, sheetName, nowIso]);
 }
 
+function removeTripMapRows_(sheet, tripIds) {
+  const removedById = toTrueMap_(tripIds);
+  if (!Object.keys(removedById).length) {
+    return 0;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return 0;
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  const keptRows = [];
+  let removedCount = 0;
+
+  for (let i = 0; i < values.length; i += 1) {
+    const tripId = String(values[i][0] || "").trim();
+    if (tripId && removedById[tripId]) {
+      removedCount += 1;
+      continue;
+    }
+    keptRows.push(values[i]);
+  }
+
+  sheet.getRange(2, 1, lastRow - 1, 3).clearContent();
+  if (keptRows.length) {
+    sheet.getRange(2, 1, keptRows.length, 3).setValues(keptRows);
+  }
+
+  return removedCount;
+}
+
 function replaceTemplateTokens_(sheet, trip) {
   const replacements = [
     { token: "{{TRIP_ID}}", value: String(getTripId_(trip) || "") },
@@ -1063,6 +1242,20 @@ function toTripIdMap_(trips) {
     const id = getTripId_(trips[i]);
     if (id) {
       map[id] = true;
+    }
+  }
+  return map;
+}
+
+function toTrueMap_(items) {
+  const map = {};
+  if (!Array.isArray(items)) {
+    return map;
+  }
+  for (let i = 0; i < items.length; i += 1) {
+    const key = String(items[i] || "").trim();
+    if (key) {
+      map[key] = true;
     }
   }
   return map;

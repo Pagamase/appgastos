@@ -407,7 +407,7 @@ function onTripDelete() {
   state.trips = state.trips.filter((trip) => trip.id !== activeTrip.id);
   state.activeTripId = state.trips[0]?.id ?? null;
   exitExpenseEditMode({ resetForm: true });
-  saveState();
+  saveState({ immediateRemote: true });
   renderAll();
 }
 
