@@ -533,18 +533,50 @@ function onExportPdf() {
     return;
   }
 
-  const printWindow = window.open("", "_blank", "noopener,noreferrer");
+  const reportHtml = buildTripReportHtml(activeTrip, { autoPrint: true });
+  const printWindow = window.open("", "_blank");
   if (!printWindow) {
-    window.alert("No se pudo abrir la vista de impresion. Revisa el bloqueador de ventanas.");
+    printReportWithIframeFallback_(activeTrip);
     return;
   }
 
   printWindow.document.open();
-  printWindow.document.write(buildTripReportHtml(activeTrip));
+  printWindow.document.write(reportHtml);
   printWindow.document.close();
 }
 
-function buildTripReportHtml(trip) {
+function printReportWithIframeFallback_(trip) {
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.srcdoc = buildTripReportHtml(trip, { autoPrint: false });
+
+  iframe.addEventListener("load", () => {
+    try {
+      if (iframe.contentWindow) {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      }
+    } catch (error) {
+      console.error("No se pudo imprimir con iframe:", error);
+      window.alert("No se pudo abrir la impresion automaticamente en este navegador.");
+    } finally {
+      window.setTimeout(() => {
+        iframe.remove();
+      }, 1500);
+    }
+  });
+
+  document.body.appendChild(iframe);
+  setSyncStatus("Popup bloqueado: se usa impresion integrada.", "warn");
+}
+
+function buildTripReportHtml(trip, { autoPrint = true } = {}) {
   const expenses = trip.expenses
     .slice()
     .filter((expense) => toExpenseAmount(expense.amount) > 0)
@@ -611,6 +643,14 @@ function buildTripReportHtml(trip) {
 
   const generatedAt = new Date().toLocaleString("es-ES");
   const title = `Reporte de Gastos - ${trip.name || "Viaje"}`;
+  const printScript = autoPrint
+    ? `
+  <script>
+    window.addEventListener("load", function () {
+      setTimeout(function () { window.print(); }, 200);
+    });
+  </script>`
+    : "";
 
   return `<!doctype html>
 <html lang="es">
@@ -680,12 +720,7 @@ function buildTripReportHtml(trip) {
       ${expenseRows}
     </tbody>
   </table>
-
-  <script>
-    window.addEventListener("load", function () {
-      setTimeout(function () { window.print(); }, 200);
-    });
-  </script>
+${printScript}
 </body>
 </html>`;
 }
